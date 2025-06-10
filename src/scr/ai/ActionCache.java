@@ -15,8 +15,8 @@ public class ActionCache {
     }
 
     public void update(double[] in, double[] out) {
-        this.lastIn  = in.clone();
-        this.lastOut = out.clone();
+        this.lastIn  = in != null ? in.clone() : null;
+        this.lastOut = out != null ? out.clone() : null;
     }
 
     public double[] get() {

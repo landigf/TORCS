@@ -11,6 +11,9 @@ public class KNNDriver extends SimpleDriver {
     private final ActionCache cache = new ActionCache();
     private final int k = 3;
     private int gear = 1;
+    
+    // Configurazione delle feature (deve corrispondere al modello)
+    private String[] featureConfig; // Cambia qui per testare
 
     public KNNDriver() {
         try (ObjectInputStream ois = new ObjectInputStream(
@@ -36,14 +39,28 @@ public class KNNDriver extends SimpleDriver {
     }
 
     private double[] extractFeatures(SensorModel s) {
-        double[] f = new double[21];
-        f[0] = s.getAngleToTrackAxis();
-        f[1] = s.getSpeed() / 300.0;
-        double[] tr = s.getTrackEdgeSensors();
-        for (int i = 0; i < 19; i++) f[2 + i] = tr[i] / 200.0;
-        return f;
+        double[] features = new double[featureConfig.length];
+        
+        for (int i = 0; i < featureConfig.length; i++) {
+            String feature = featureConfig[i];
+            switch (feature) {
+                case "angle" -> features[i] = s.getAngleToTrackAxis();
+                case "gear" -> features[i] = s.getGear();
+                case "rpm" -> features[i] = s.getRPM() / 10000.0;
+                case "speedX" -> features[i] = s.getSpeed() / 100.0;
+                case "speedY" -> features[i] = s.getLateralSpeed() / 100.0;
+                case "trackPos" -> features[i] = s.getTrackPosition();
+                default -> {
+                    if (feature.startsWith("track")) {
+                        int idx = Integer.parseInt(feature.substring(5));
+                        features[i] = s.getTrackEdgeSensors()[idx] / 200.0;
+                    }
+                }
+            }
+        }
+        return features;
     }
-
+    
     private boolean isStraight(SensorModel s) {
         double[] t = s.getTrackEdgeSensors();
         return t[9] > 150 && Math.abs(s.getAngleToTrackAxis()) < 0.1;

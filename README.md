@@ -20,7 +20,7 @@ javac -d classes src/scr/ai/DataPoint.java src/scr/ai/KDTree.java src/scr/ai/Dat
 Poi crea il file serializzato:
 '''
 cd classes
-java -cp . scr.ai.DatasetBuilder ../classes/drive_log_clean.csv knn.tree
+java -cp . scr.ai.DatasetBuilder ../classes/dataset_union.csv knn.tree
 '''
 
 ## Step 3. - Compilazione del driver K-NN
@@ -35,3 +35,17 @@ Da \Torcs
 cd classes
 java -cp . scr.Client scr.ai.KNNDriver localhost:3001 verbose:on
 '''
+
+## aa
+
+# Configurazione basic (default)
+.\.build_knn.ps1
+
+# Configurazione con sensori
+.\.build_knn.ps1 -Config sensors
+
+# Configurazione completa
+.\.build_knn.ps1 -Config all
+
+# Con dataset personalizzato
+.\.build_knn.ps1 -Config sensors -DatasetPath "my_dataset.csv" -ModelName "my_model.tree"
