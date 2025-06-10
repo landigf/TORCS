@@ -6,7 +6,7 @@ input_dir = 'classes'
 output_file = os.path.join(input_dir, 'dataset_union.csv')
 
 # Match both drive_log.csv and drive_log*_clean.csv
-csv_files = glob.glob(os.path.join(input_dir, 'drive_log*_clean.csv'))
+csv_files = glob.glob(os.path.join(input_dir, 'drive*_clean.csv'))
 
 # Remove duplicates in case drive_log.csv is matched twice
 csv_files = list(set(csv_files))

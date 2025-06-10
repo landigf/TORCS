@@ -9,11 +9,14 @@ import scr.SimpleDriver;
 public class KNNDriver extends SimpleDriver {
     private KDTree tree;
     private final ActionCache cache = new ActionCache();
-    private final int k = 3;
-    private int gear = 1;
+    private final int k = 7; // Numero di vicini da considerare
     
     // Configurazione delle feature (deve corrispondere al modello)
     private String[] featureConfig = DatasetBuilder.CONFIG_WITH_SENSORS;
+
+    /* Costanti di cambio marcia */
+    private final int[] gearUp   = {5000, 6000, 6000, 6500, 7000, 0};
+    private final int[] gearDown = {   0, 2500, 3000, 3000, 3500, 3500};
 
     public KNNDriver() {
         try (ObjectInputStream ois = new ObjectInputStream(
@@ -68,26 +71,26 @@ public class KNNDriver extends SimpleDriver {
         return features;
     }
     
-    private boolean isStraight(SensorModel s) {
-        double[] t = s.getTrackEdgeSensors();
-        return t[9] > 150 && Math.abs(s.getAngleToTrackAxis()) < 0.1;
-    }
+    /**
+     * Restituisce la marcia ottimale sulla base di RPM e soglie
+     */
+    private int getGear(SensorModel sensors) {
+        int gear = sensors.getGear();
+        double rpm = sensors.getRPM();
 
-    private boolean isCurve(SensorModel s) {
-        double[] t = s.getTrackEdgeSensors();
-        return t[9] < 70 || Math.abs(s.getAngleToTrackAxis()) > 0.3;
-    }
-
-    private int updateGear(SensorModel s, double accel, double brake) {
-        double rpm = s.getRPM();
-        double speed = s.getSpeed();
-        if (isStraight(s)) {
-            if (rpm > 8500 && gear < 6) gear++;
-            if (rpm < 4000 && gear > 1) gear--;
-        } else if (isCurve(s)) {
-            if (speed > 100) return 0;
-            if (rpm < 3000 && gear > 1) gear--;
+        // Se la marcia è N o R, impostiamo 1
+        if (gear < 1) {
+            return 1;
         }
+        // Up-shift
+        if (gear < 6 && rpm >= gearUp[gear - 1]) {
+            return gear + 1;
+        }
+        // Down-shift
+        if (gear > 1 && rpm <= gearDown[gear - 1]) {
+            return gear - 1;
+        }
+        // Mantieni
         return gear;
     }
 
@@ -98,10 +101,16 @@ public class KNNDriver extends SimpleDriver {
         out.steering = a[0];
         out.accelerate = a[1];
         out.brake = a[2];
-        out.gear = updateGear(s, out.accelerate, out.brake);
+        
+        // Usa le regole ottimizzate per il cambio marcia
+        out.gear = getGear(s);
+        
         return out;
     }
 
-    @Override public void reset() { cache.update(null,null); gear = 1; }
+    @Override public void reset() { 
+        cache.update(null, null); 
+    }
+    
     @Override public void shutdown() {}
 }
