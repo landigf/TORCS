@@ -7,7 +7,7 @@ public class DatasetBuilder {
     
     // Configurazioni predefinite delle feature
     public static final String[] CONFIG_BASIC = {"angle", "gear", "rpm", "speedX", "speedY", "trackPos"};
-    public static final String[] CONFIG_WITH_SENSORS = {"angle", "gear", "rpm", "speedX", "speedY", "track0", "track5", "track9", "track13", "track18", "trackPos"};
+    public static final String[] CONFIG_WITH_SENSORS = {"angle", "gear", "rpm", "speedX", "speedY", "track0", "track5", "track9", "track13", "track18", "wheel0", "trackPos"};
     public static final String[] CONFIG_ALL_SENSORS = {"angle", "gear", "rpm", "speedX", "speedY", "track0", "track1", "track2", "track3", "track4", "track5", "track6", "track7", "track8", "track9", "track10", "track11", "track12", "track13", "track14", "track15", "track16", "track17", "track18", "trackPos"};
     
     // Le azioni sono sempre le stesse
@@ -72,14 +72,27 @@ public class DatasetBuilder {
     private static double parseAndNormalize(String value, String columnName) {
         double val = Double.parseDouble(value);
         
-        // Normalizzazione specifica per colonna
+        // Normalizzazione semplificata basata sui dati
         switch (columnName) {
-            case "curLapTime" -> val = val / 300.0;  // Normalizza tempo
-            case "rpm" -> val = val / 10000.0;       // Normalizza RPM
-            case "speedX", "speedY" -> val = val / 100.0;  // Normalizza velocità
+            // StandardScaler approssimativo: centra attorno a 0
+            case "angle" -> val = val; // Già piccolo, lascia così
+            case "curLapTime" -> val = (val - 22) / 15; // Centra attorno a 22, dividi per ~std
+            case "speedX" -> val = (val - 140) / 50; // Centra attorno a 140
+            case "speedY" -> val = val / 50; // Normalizza per outliers
+            case "trackPos" -> val = val; // Già -1 a 1
+            
+            // MinMaxScaler semplice: 0-1
+            case "gear" -> val = (val - 1) / 5; // 1-6 → 0-1
+            case "rpm" -> val = val / 10000; // Max ~10k
+            case "damage" -> val = val; // Già 0
+            case "lastLapTime" -> val = val / 60; // Max ~60 sec
+            
+            // Track sensors: semplice divisione
             default -> {
                 if (columnName.startsWith("track")) {
-                    val = val / 200.0;  // Normalizza sensori di traccia
+                    val = val / 200; // Max 200
+                } else if (columnName.startsWith("wheel")) {
+                    val = val / 200; // Circa il range
                 }
             }
         }
