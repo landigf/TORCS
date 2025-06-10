@@ -15,6 +15,7 @@ public class Action {
 	public int focus = 360;	// ML Angolo di messa a fuoco desiderato in gradi [-90; 90],
 							// impostare 360 se non si desidera alcuna lettura della messa a fuoco!
 
+	@Override
 	public String toString() {
 		limitValues();
 		return "(accel " + accelerate + ") " + "(brake " + brake + ") " + "(clutch " + clutch + ") " + "(gear " + gear

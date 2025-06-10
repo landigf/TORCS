@@ -6,6 +6,8 @@ Da \Torcs
 javac -d classes src/scr/*.java src/scr/ai/DataLoggerDriver.java
 cd classes
 java -cp . scr.Client scr.ai.DataLoggerDriver localhost:3001 verbose:on
+#### remoto
+java -cp . scr.Client scr.ai.DataLoggerDriver host:172.19.196.17 port:3001 verbose:on
 '''
 ### 1.a -pulizia e verifica del dataset
 compila .utils/dataset_clean.py

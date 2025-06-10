@@ -1,28 +1,27 @@
 package scr.ai;
 
-import scr.SimpleDriver;
-import scr.SensorModel;
-import scr.Action;
-
+import java.awt.event.*;
 import java.io.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.awt.event.*;
 import javax.swing.*;
+import scr.Action;
+import scr.SensorModel;
+import scr.SimpleDriver;
 
 public class DataLoggerDriver extends SimpleDriver {
     private PrintWriter log;
     private long t0;
 
+    /* Costanti di cambio marcia */
+    private final int[] gearUp   = {5000, 6000, 6000, 6500, 7000, 0};
+    private final int[] gearDown = {   0, 2500, 3000, 3000, 3500, 3500};
+
     // Stato tasti
-    private boolean leftPressed = false;
+    private boolean leftPressed  = false;
     private boolean rightPressed = false;
     private boolean accelPressed = false;
     private boolean brakePressed = false;
-
-    // Soglie cambio marcia (da SimpleDriver)
-    private final int[] gearUp   = {5000, 6000, 6000, 6500, 7000,    0};
-    private final int[] gearDown = {   0, 2500, 3000, 3000, 3500, 3500};
 
     public DataLoggerDriver() {
         // Apri/crea CSV
@@ -30,12 +29,10 @@ public class DataLoggerDriver extends SimpleDriver {
             File f = new File("drive_log.csv");
             log = new PrintWriter(new FileWriter(f, true), true);
             if (f.length() == 0) {
-                String header = "time,angle,curLapTime,damage,fuel,gear,rpm," +
-                    "speedX,speedY,speedZ,lastLapTime," +
-                    IntStream.range(0, 19)
-                             .mapToObj(i -> "track" + i)
-                             .collect(Collectors.joining(",")) +
-                    ",trackPos,steer,accel,brake";
+                String header = "time,angle,curLapTime,damage,gear,rpm,speedX,speedY,lastLapTime," +
+                                IntStream.range(0,19).mapToObj(i->"track"+i)
+                                         .collect(Collectors.joining(",")) +
+                                ",wheel0,wheel1,wheel2,wheel3,trackPos,steer,accel,brake";
                 log.println(header);
             }
         } catch (IOException e) {
@@ -44,32 +41,53 @@ public class DataLoggerDriver extends SimpleDriver {
 
         // Finestra per input da tastiera
         JFrame frame = new JFrame("TORCS Manual Control");
-        frame.setSize(200, 200);
+        frame.setSize(200,200);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setFocusable(true);
         frame.addKeyListener(new KeyAdapter() {
-            @Override
-            public void keyPressed(KeyEvent e) {
-                switch (e.getKeyCode()) {
-                    case KeyEvent.VK_W -> accelPressed = true;
-                    case KeyEvent.VK_S -> brakePressed = true;
-                    case KeyEvent.VK_A -> leftPressed = true;
-                    case KeyEvent.VK_D -> rightPressed = true;
+            @Override public void keyPressed(KeyEvent e) {
+                switch(e.getKeyCode()){
+                    case KeyEvent.VK_W -> accelPressed  = true;
+                    case KeyEvent.VK_S -> brakePressed  = true;
+                    case KeyEvent.VK_A -> leftPressed   = true;
+                    case KeyEvent.VK_D -> rightPressed  = true;
                 }
             }
-            @Override
-            public void keyReleased(KeyEvent e) {
-                switch (e.getKeyCode()) {
-                    case KeyEvent.VK_W -> accelPressed = false;
-                    case KeyEvent.VK_S -> brakePressed = false;
-                    case KeyEvent.VK_A -> leftPressed = false;
-                    case KeyEvent.VK_D -> rightPressed = false;
+            @Override public void keyReleased(KeyEvent e) {
+                switch(e.getKeyCode()){
+                    case KeyEvent.VK_W -> accelPressed  = false;
+                    case KeyEvent.VK_S -> brakePressed  = false;
+                    case KeyEvent.VK_A -> leftPressed   = false;
+                    case KeyEvent.VK_D -> rightPressed  = false;
                 }
             }
         });
         frame.setVisible(true);
         frame.setAlwaysOnTop(true);
         frame.requestFocus();
+    }
+
+    /**
+     * Restituisce la marcia ottimale sulla base di RPM e soglie
+     */
+    private int getGear(SensorModel sensors) {
+        int gear = sensors.getGear();
+        double rpm = sensors.getRPM();
+
+        // Se la marcia è N o R, impostiamo 1
+        if (gear < 1) {
+            return 1;
+        }
+        // Up-shift
+        if (gear < 6 && rpm >= gearUp[gear - 1]) {
+            return gear + 1;
+        }
+        // Down-shift
+        if (gear > 1 && rpm <= gearDown[gear - 1]) {
+            return gear - 1;
+        }
+        // Mantieni
+        return gear;
     }
 
     @Override
@@ -79,70 +97,60 @@ public class DataLoggerDriver extends SimpleDriver {
         if (a == null) a = new Action();
 
         // 2) Cambio marcia automatico
-        a.gear = getAutomaticGear(s);
+        a.gear = getGear(s);
 
-        // 3) Lettura sensori
+        // 3) Raccolta dati sensori
         double angle       = s.getAngleToTrackAxis();
         double curLapTime  = s.getCurrentLapTime();
         double damage      = s.getDamage();
         double rpm         = s.getRPM();
         double speedX      = s.getSpeed();
+        double speedY      = s.getLateralSpeed();
         double lastLapTime = s.getLastLapTime();
-        double[] track     = s.getTrackEdgeSensors();
+        double[] trackArr  = s.getTrackEdgeSensors();
+        double[] wheelSpin = s.getWheelSpinVelocity();
         double trackPos    = s.getTrackPosition();
         long   time        = System.currentTimeMillis() - t0;
 
-        // 4) Log CSV (includo a.gear)
+        // 4) Debug console
+        System.out.println("Steer:"+a.steering+" Accel:"+a.accelerate+" Brake:"+a.brake);
+        System.out.println("SpeedX:"+speedX+" RPM:"+rpm+" Gear:"+a.gear);
+
+        // 5) Log CSV
         StringBuilder sb = new StringBuilder();
-        sb.append(time).append(',')
-          .append(angle).append(',')
-          .append(curLapTime).append(',')
-          .append(damage).append(',')
-          .append(a.gear).append(',')
-          .append(rpm).append(',')
-          .append(speedX).append(',')
+        sb.append(time).append(',').append(angle).append(',')
+          .append(curLapTime).append(',').append(damage).append(',')
+          .append(a.gear).append(',').append(rpm).append(',')
+          .append(speedX).append(',').append(speedY).append(',')
           .append(lastLapTime);
-        for (double d : track) sb.append(',').append(d);
+        for (double d : trackArr) sb.append(',').append(d);
+        for (double w : wheelSpin) sb.append(',').append(w);
         sb.append(',').append(trackPos)
           .append(',').append(a.steering)
           .append(',').append(a.accelerate)
           .append(',').append(a.brake);
-        log.println(sb);
+        log.println(sb.toString());
+        log.flush();
 
         return a;
     }
 
-    @Override
-    public void reset() {
+    @Override public void reset() {
         t0 = System.currentTimeMillis();
     }
 
-    @Override
-    public void shutdown() {
+    @Override public void shutdown() {
         log.close();
     }
 
-    /** Algoritmo automatico di cambio marcia basato su RPM */
-    private int getAutomaticGear(SensorModel s) {
-        int g = s.getGear();
-        double rpm = s.getRPM();
-        if (g < 1) g = 1;
-        if (g < 6 && rpm >= gearUp[g - 1]) {
-            return g + 1;
-        } else if (g > 1 && rpm <= gearDown[g - 1]) {
-            return g - 1;
-        }
-        return g;
-    }
-
-    /** Mappa WASD su sterzo/freno/gas (con sterzo invertito) */
+    /**
+     * Mappa WASD su sterzo/freno/gas
+     */
     private Action readHumanInput() {
         Action a = new Action();
         if (accelPressed) a.accelerate = 1.0f;
         if (brakePressed) a.brake      = 1.0f;
-
-        // **sterzo invertito**: A→+1, D→-1
-        if (leftPressed && !rightPressed)       a.steering = +1.0f;
+        if (leftPressed && !rightPressed)       a.steering =  1.0f;
         else if (rightPressed && !leftPressed)  a.steering = -1.0f;
         else                                    a.steering =  0.0f;
         return a;
