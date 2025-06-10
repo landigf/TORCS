@@ -13,7 +13,7 @@ public class KNNDriver extends SimpleDriver {
     private int gear = 1;
     
     // Configurazione delle feature (deve corrispondere al modello)
-    private String[] featureConfig; // Cambia qui per testare
+    private String[] featureConfig = DatasetBuilder.CONFIG_WITH_SENSORS; // ✅ AGGIUNTO
 
     public KNNDriver() {
         try (ObjectInputStream ois = new ObjectInputStream(
@@ -44,16 +44,23 @@ public class KNNDriver extends SimpleDriver {
         for (int i = 0; i < featureConfig.length; i++) {
             String feature = featureConfig[i];
             switch (feature) {
+                // Stessa normalizzazione del DatasetBuilder
                 case "angle" -> features[i] = s.getAngleToTrackAxis();
-                case "gear" -> features[i] = s.getGear();
-                case "rpm" -> features[i] = s.getRPM() / 10000.0;
-                case "speedX" -> features[i] = s.getSpeed() / 100.0;
-                case "speedY" -> features[i] = s.getLateralSpeed() / 100.0;
+                case "curLapTime" -> features[i] = (s.getCurrentLapTime() - 22) / 15;
+                case "speedX" -> features[i] = (s.getSpeed() - 140) / 50;
+                case "speedY" -> features[i] = s.getLateralSpeed() / 50;
                 case "trackPos" -> features[i] = s.getTrackPosition();
+                case "gear" -> features[i] = (s.getGear() - 1) / 5.0;
+                case "rpm" -> features[i] = s.getRPM() / 10000.0;
+                case "damage" -> features[i] = s.getDamage();
+                case "lastLapTime" -> features[i] = s.getLastLapTime() / 60.0;
                 default -> {
                     if (feature.startsWith("track")) {
                         int idx = Integer.parseInt(feature.substring(5));
                         features[i] = s.getTrackEdgeSensors()[idx] / 200.0;
+                    } else if (feature.startsWith("wheel")) {
+                        int idx = Integer.parseInt(feature.substring(5));
+                        features[i] = s.getWheelSpinVelocity()[idx] / 200.0;
                     }
                 }
             }

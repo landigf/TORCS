@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Leggi il file CSV
-df = pd.read_csv("classes/dataset_union.csv")
+df = pd.read_csv("classes/dataset_normalized.csv")
 
 # Crea una figura 3D
 fig = plt.figure(figsize=(12, 8))
