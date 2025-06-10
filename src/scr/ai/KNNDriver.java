@@ -13,7 +13,7 @@ public class KNNDriver extends SimpleDriver {
     private int gear = 1;
     
     // Configurazione delle feature (deve corrispondere al modello)
-    private String[] featureConfig = DatasetBuilder.CONFIG_WITH_SENSORS; // ✅ AGGIUNTO
+    private String[] featureConfig = DatasetBuilder.CONFIG_WITH_SENSORS;
 
     public KNNDriver() {
         try (ObjectInputStream ois = new ObjectInputStream(
@@ -93,12 +93,11 @@ public class KNNDriver extends SimpleDriver {
 
     private Action buildAction(double[] a, SensorModel s) {
         Action out = new Action();
-        boolean curve = isCurve(s);
-        boolean straight = isStraight(s);
+    
+        // Usa sempre le azioni predette dal KNN
         out.steering = a[0];
-        if (curve) { out.accelerate = 0; out.brake = 1; }
-        else if (straight) { out.accelerate = 1; out.brake = 0; }
-        else { out.accelerate = a[1]; out.brake = a[2]; }
+        out.accelerate = a[1];
+        out.brake = a[2];
         out.gear = updateGear(s, out.accelerate, out.brake);
         return out;
     }
