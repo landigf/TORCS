@@ -1,14 +1,13 @@
 package scr.ai;
 
-import scr.SimpleDriver;
-import scr.SensorModel;
-import scr.Action;
-
+import java.awt.event.*;
 import java.io.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.awt.event.*;
 import javax.swing.*;
+import scr.Action;
+import scr.SensorModel;
+import scr.SimpleDriver;
 
 public class DataLoggerDriver extends SimpleDriver {
     private PrintWriter log;
@@ -20,9 +19,17 @@ public class DataLoggerDriver extends SimpleDriver {
     private boolean accelPressed = false;
     private boolean brakePressed = false;
 
-    // Soglie cambio marcia (da SimpleDriver)
-    private final int[] gearUp   = {5000, 6000, 6000, 6500, 7000,    0};
-    private final int[] gearDown = {   0, 2500, 3000, 3000, 3500, 3500};
+    // Sistema cambio ottimizzato
+    private int currentGear = 1;
+    private long lastGearChange = 0;
+    private final long GEAR_CHANGE_DELAY = 200; // ms tra cambi
+    
+    // Soglie RPM ottimizzate per ogni marcia
+    private final double[] OPTIMAL_SHIFT_UP_RPM = {6500, 7000, 7200, 7500, 8000, 0};
+    private final double[] OPTIMAL_SHIFT_DOWN_RPM = {0, 3000, 3500, 4000, 4500, 5000};
+    
+    // Soglie velocità per ottimizzazione
+    private final double[] MIN_SPEED_FOR_GEAR = {0, 10, 25, 45, 70, 100};
 
     public DataLoggerDriver() {
         // Apri/crea CSV
@@ -30,8 +37,8 @@ public class DataLoggerDriver extends SimpleDriver {
             File f = new File("drive_log.csv");
             log = new PrintWriter(new FileWriter(f, true), true);
             if (f.length() == 0) {
-                String header = "time,angle,curLapTime,damage,fuel,gear,rpm," +
-                    "speedX,speedY,speedZ,lastLapTime," +
+                String header = "time,angle,curLapTime,damage,gear,rpm," +
+                    "speedX,lastLapTime," +
                     IntStream.range(0, 19)
                              .mapToObj(i -> "track" + i)
                              .collect(Collectors.joining(",")) +
@@ -72,14 +79,95 @@ public class DataLoggerDriver extends SimpleDriver {
         frame.requestFocus();
     }
 
+    /** Sistema di cambio marce ottimizzato */
+    private int getOptimizedGear(SensorModel s) {
+        double rpm = s.getRPM();
+        double speed = Math.abs(s.getSpeed() * 3.6); // km/h
+        double throttle = accelPressed ? 1.0 : 0.0;
+        boolean isBraking = brakePressed;
+        long currentTime = System.currentTimeMillis();
+        
+        // Evita cambi troppo frequenti
+        if (currentTime - lastGearChange < GEAR_CHANGE_DELAY) {
+            return currentGear;
+        }
+        
+        int targetGear = currentGear;
+        
+        // Logica di cambio marcia ottimizzata
+        if (currentGear < 6) {
+            // Condizioni per scalare su
+            boolean shouldShiftUp = false;
+            
+            if (rpm > OPTIMAL_SHIFT_UP_RPM[currentGear - 1]) {
+                shouldShiftUp = true;
+            }
+            
+            // Cambio anticipato se si sta accelerando forte
+            if (throttle > 0.8 && rpm > (OPTIMAL_SHIFT_UP_RPM[currentGear - 1] * 0.9)) {
+                shouldShiftUp = true;
+            }
+            
+            // Verifica che la velocità sia adeguata per la marcia superiore
+            if (shouldShiftUp && speed >= MIN_SPEED_FOR_GEAR[currentGear]) {
+                targetGear = currentGear + 1;
+            }
+        }
+        
+        if (currentGear > 1) {
+            // Condizioni per scalare giù
+            boolean shouldShiftDown = false;
+            
+            if (rpm < OPTIMAL_SHIFT_DOWN_RPM[currentGear - 1]) {
+                shouldShiftDown = true;
+            }
+            
+            // Cambio anticipato in frenata
+            if (isBraking && rpm < (OPTIMAL_SHIFT_DOWN_RPM[currentGear - 1] * 1.2)) {
+                shouldShiftDown = true;
+            }
+            
+            // Cambio forzato se velocità troppo bassa per la marcia
+            if (speed < MIN_SPEED_FOR_GEAR[currentGear - 1] * 0.8) {
+                shouldShiftDown = true;
+            }
+            
+            // Cambio per engine braking in curva
+            double trackCurvature = Math.abs(s.getAngleToTrackAxis());
+            if (trackCurvature > 0.3 && speed > 60 && !accelPressed) {
+                shouldShiftDown = true;
+            }
+            
+            if (shouldShiftDown) {
+                targetGear = currentGear - 1;
+            }
+        }
+        
+        // Protezione contro over-rev e under-rev
+        if (targetGear > currentGear && rpm > 8500) {
+            targetGear = currentGear; // Non cambiare se RPM troppo alti
+        }
+        if (targetGear < currentGear && rpm < 2000) {
+            targetGear = currentGear; // Non cambiare se RPM troppo bassi
+        }
+        
+        // Aggiorna stato se cambio effettuato
+        if (targetGear != currentGear) {
+            lastGearChange = currentTime;
+            currentGear = targetGear;
+        }
+        
+        return targetGear;
+    }
+
     @Override
     public Action control(SensorModel s) {
         // 1) Input umano
         Action a = readHumanInput();
         if (a == null) a = new Action();
 
-        // 2) Cambio marcia automatico
-        a.gear = getAutomaticGear(s);
+        // 2) Cambio marcia ottimizzato
+        a.gear = getOptimizedGear(s);
 
         // 3) Lettura sensori
         double angle       = s.getAngleToTrackAxis();
@@ -92,7 +180,16 @@ public class DataLoggerDriver extends SimpleDriver {
         double trackPos    = s.getTrackPosition();
         long   time        = System.currentTimeMillis() - t0;
 
-        // 4) Log CSV (includo a.gear)
+        // 4) Debug: stampa i valori di input E sensori per verifica
+        System.out.println("Input - Steer: " + a.steering + ", Accel: " + a.accelerate + ", Brake: " + a.brake);
+        System.out.println("Sensors - Speed: " + speedX + ", RPM: " + rpm + ", Gear: " + a.gear + ", TrackPos: " + trackPos);
+        
+        // 5) Verifica che i sensori track abbiano 19 elementi
+        if (track.length != 19) {
+            System.err.println("WARNING: Track sensors length is " + track.length + " instead of 19!");
+        }
+
+        // 6) Log CSV con ordine corretto
         StringBuilder sb = new StringBuilder();
         sb.append(time).append(',')
           .append(angle).append(',')
@@ -108,6 +205,7 @@ public class DataLoggerDriver extends SimpleDriver {
           .append(',').append(a.accelerate)
           .append(',').append(a.brake);
         log.println(sb);
+        log.flush(); // Forza la scrittura
 
         return a;
     }
@@ -120,19 +218,6 @@ public class DataLoggerDriver extends SimpleDriver {
     @Override
     public void shutdown() {
         log.close();
-    }
-
-    /** Algoritmo automatico di cambio marcia basato su RPM */
-    private int getAutomaticGear(SensorModel s) {
-        int g = s.getGear();
-        double rpm = s.getRPM();
-        if (g < 1) g = 1;
-        if (g < 6 && rpm >= gearUp[g - 1]) {
-            return g + 1;
-        } else if (g > 1 && rpm <= gearDown[g - 1]) {
-            return g - 1;
-        }
-        return g;
     }
 
     /** Mappa WASD su sterzo/freno/gas (con sterzo invertito) */

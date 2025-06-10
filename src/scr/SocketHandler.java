@@ -20,7 +20,7 @@ public class SocketHandler {
 	private InetAddress address;
 	private int port;
 	private DatagramSocket socket;
-	private boolean verbose;
+	private final boolean verbose;
 
 	public SocketHandler(String host, int port, boolean verbose) {
 
@@ -28,14 +28,20 @@ public class SocketHandler {
 		try {
 			this.address = InetAddress.getByName(host);
 		} catch (UnknownHostException e) {
-			e.printStackTrace();
+			if (verbose) {
+				System.err.println("Unknown host: " + host);
+			}
+			throw new RuntimeException("Failed to resolve host: " + host, e);
 		}
 		this.port = port;
 		// init the socket
 		try {
 			socket = new DatagramSocket();
 		} catch (SocketException e) {
-			e.printStackTrace();
+			if (verbose) {
+				System.err.println("Failed to create socket: " + e.getMessage());
+			}
+			throw new RuntimeException("Failed to create UDP socket", e);
 		}
 		this.verbose = verbose;
 	}
@@ -48,7 +54,10 @@ public class SocketHandler {
 			byte[] buffer = msg.getBytes();
 			socket.send(new DatagramPacket(buffer, buffer.length, address, port));
 		} catch (IOException e) {
-			e.printStackTrace();
+			if (verbose) {
+				System.err.println("Failed to send message: " + e.getMessage());
+			}
+			throw new RuntimeException("Failed to send UDP packet", e);
 		}
 	}
 
@@ -64,8 +73,10 @@ public class SocketHandler {
 		} catch (SocketTimeoutException se) {
 			if (verbose)
 				System.out.println("Socket Timeout!");
-		} catch (Exception e) {
-			e.printStackTrace();
+		} catch (IOException e) {
+			if (verbose) {
+				System.err.println("IO exception while receiving: " + e.getMessage());
+			}
 		}
 		return null;
 	}
@@ -78,9 +89,8 @@ public class SocketHandler {
 			return received;
 		} catch (SocketException e) {
 			if (verbose) {
-				System.out.println("Socket exception when setting timeout: " + e.getMessage());
+				System.err.println("Socket exception when setting timeout: " + e.getMessage());
 			}
-			e.printStackTrace();
 		}
 		return null;
 	}

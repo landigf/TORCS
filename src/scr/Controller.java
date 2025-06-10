@@ -7,16 +7,12 @@ public abstract class Controller {
 		WARMUP, QUALIFYING, RACE, UNKNOWN;
 
 		static Stage fromInt(int value) {
-			switch (value) {
-			case 0:
-				return WARMUP;
-			case 1:
-				return QUALIFYING;
-			case 2:
-				return RACE;
-			default:
-				return UNKNOWN;
-			}
+			return switch (value) {
+				case 0 -> WARMUP;
+				case 1 -> QUALIFYING;
+				case 2 -> RACE;
+				default -> UNKNOWN;
+			};
 		}
 	};
 
