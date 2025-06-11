@@ -3,7 +3,7 @@ package scr.ai;
 public class ActionCache {
     private double[] lastIn = null;
     private double[] lastOut = null;
-    private final double tol = 0.005;
+    private final double tol = 0.005; // Tolleranza per considerare simili le azioni
 
     public boolean isSimilar(double[] in) {
         if (lastIn == null) return false;

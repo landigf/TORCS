@@ -9,7 +9,7 @@ import scr.SimpleDriver;
 public class KNNDriver extends SimpleDriver {
     private KDTree tree;
     private final ActionCache cache = new ActionCache();
-    private final int k = 7; // Numero di vicini da considerare
+    private final int k = 6; // Numero di vicini da considerare
     
     // Configurazione delle feature (deve corrispondere al modello)
     private String[] featureConfig = DatasetBuilder.CONFIG_WITH_SENSORS;

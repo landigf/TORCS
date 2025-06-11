@@ -103,7 +103,7 @@ public class DatasetBuilder {
     public static void main(String[] args) throws Exception {
         String csv = args.length > 0 ? args[0] : "drive_log.csv";
         String model = args.length > 1 ? args[1] : "knn.tree";
-        String config = args.length > 2 ? args[2] : "basic";
+        String config = args.length > 2 ? args[2] : "sensors";
         
         // Scegli configurazione
         String[] featureColumns;
