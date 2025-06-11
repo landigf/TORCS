@@ -25,13 +25,14 @@ public class KNNDriver extends SimpleDriver {
 
     private SimpleGear gearChanger = new SimpleGear();
 
+     private double lastDamage = 0;           // per rilevare impatti
 
     /* steering smoothing */
     private double prevSteer = 0;
     private static final double ALPHA = 0.7;
 
-    /* OOD guard */
-    private static final double OOD_THRESHOLD = 1.5;
+    /* OOD guard - OutOfDistribution */
+    private static final double OOD_THRESHOLD = 0.25;
 
     /* feature set */
     private static final String[] FEATURES = DatasetBuilder.CONFIG_WITH_SENSORS;
@@ -51,8 +52,21 @@ public class KNNDriver extends SimpleDriver {
     @Override
     public Action control(SensorModel s) {
 
-        long t0 = System.nanoTime();             // START CHRONO
+        double trackPos = s.getTrackPosition();
+        double dmg      = s.getDamage();
 
+        boolean offTrack = (trackPos <= -1.0 || trackPos >= 1.0);
+        boolean hit      = (dmg > lastDamage + 0.5);    // soglia minima per rumore
+        boolean isStuck = s.getTrackEdgeSensors()[9] == -1.0;
+
+        if (offTrack || hit) {
+            lastDamage = dmg;          // aggiorna stato prima di delegare
+            System.err.printf("\n\n=========\n\n\n\n===========\n[WARN] off-track: %.2f, hit: %b, stuck: %b - fallback%n====\n",
+                              trackPos, hit, isStuck);
+            return fallback.control(s);
+        }
+
+        long t0 = System.nanoTime();             // START CHRONO
         /* ---- K-NN oppure cache ---- */
         double[] in  = extractFeatures(s);
         double[] actArr = cache.lookup(in);
@@ -97,7 +111,7 @@ public class KNNDriver extends SimpleDriver {
 
         // fallback su frame lenti
         if (elapsedMs > MAX_LATENCY_MS) {
-            System.err.printf("\n\n**************\n[WARN] slow frame %d ms > %d - fallback%n",
+            System.err.printf("\n\n\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n**************\n[WARN] slow frame %d ms > %d - fallback%n",
                               elapsedMs, MAX_LATENCY_MS);
             out = fallback.control(s);
         }
@@ -106,7 +120,7 @@ public class KNNDriver extends SimpleDriver {
         long now = System.nanoTime();
         if (now - lastLog >= LOG_INTERVAL_NS) {
             double avg = (double) totTime / frames;
-            System.out.printf("\n***\n*****\n******\n\n\n\n[INFO] avg %.2f ms   max %d ms%n\n\n\n\n\n\n\n", avg, maxDelay);
+            System.out.printf("\n***[INFO] avg %.2f ms   max %d ms%n\n\n\n\n\n\n\n", avg, maxDelay);
             lastLog = now;
             maxDelay = 0;                        // reset per prossimo intervallo
         }
@@ -117,9 +131,9 @@ public class KNNDriver extends SimpleDriver {
     /* ---------- utility ---------- */
 
     private int dynamicK(double speed) {
-        if (speed < 30)  return 5;
+        if (speed < 30)  return 7;
         if (speed > 120) return 7;
-        return 7;
+        return 6;
     }
 
     private Action buildAction(double[] a, SensorModel s) {
