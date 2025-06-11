@@ -3,7 +3,7 @@
 ## Step 1. - ottenere il dataset
 Da \Torcs
 '''
-javac -d classes src/scr/*.java src/scr/ai/DataLoggerDriver.java
+javac -d classes src/scr/*.java src/scr/ai/SimpleGear.java src/scr/ai/DataLoggerDriver.java
 cd classes
 java -cp . scr.Client scr.ai.DataLoggerDriver localhost:3001 verbose:on
 #### remoto

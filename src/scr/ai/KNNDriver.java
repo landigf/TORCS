@@ -16,21 +16,14 @@ public class KNNDriver extends SimpleDriver {
 
     /* ---------- watchdog ---------- */
     private static final long MAX_LATENCY_MS  = 15;
-    private static final long LOG_INTERVAL_NS = 10_000_000_000L;   // 10 s
+    private static final long LOG_INTERVAL_NS = 5_000_000_000L;   // 10 s
 
     private long totTime  = 0;      // somma dei ms totali
     private long frames   = 0;      // cicli
     private long maxDelay = 0;      // max ritardo nell’intervallo
     private long lastLog  = System.nanoTime();
 
-    /* ---------- cambio marcia ---------- */
-    private static final double[] RPM_UP   = { 7000, 7200, 7300, 7400, 7500, 0 };
-    private static final double[] RPM_DOWN = { 0,    2800, 3000, 3200, 3500, 0 };
-    private static final long   MIN_SHIFT_NS = 300_000_000;  // 0.3 s
-    private static final double ANG_CURVE    = 0.12;         // ~7°
-    private static final double SPEED_MIN_DS = 60;           // no downshift sopra 60 km/h
-    private int   lastGear        = 1;
-    private long  lastShiftTimeNs = 0;
+    private SimpleGear gearChanger = new SimpleGear();
 
 
     /* steering smoothing */
@@ -38,7 +31,7 @@ public class KNNDriver extends SimpleDriver {
     private static final double ALPHA = 0.7;
 
     /* OOD guard */
-    private static final double OOD_THRESHOLD = 0.4;
+    private static final double OOD_THRESHOLD = 1.5;
 
     /* feature set */
     private static final String[] FEATURES = DatasetBuilder.CONFIG_WITH_SENSORS;
@@ -113,7 +106,7 @@ public class KNNDriver extends SimpleDriver {
         long now = System.nanoTime();
         if (now - lastLog >= LOG_INTERVAL_NS) {
             double avg = (double) totTime / frames;
-            System.out.printf("\n***\n*****\n******\n[INFO] avg %.2f ms   max %d ms%n\n\n", avg, maxDelay);
+            System.out.printf("\n***\n*****\n******\n\n\n\n[INFO] avg %.2f ms   max %d ms%n\n\n\n\n\n\n\n", avg, maxDelay);
             lastLog = now;
             maxDelay = 0;                        // reset per prossimo intervallo
         }
@@ -124,9 +117,9 @@ public class KNNDriver extends SimpleDriver {
     /* ---------- utility ---------- */
 
     private int dynamicK(double speed) {
-        if (speed < 30)  return 3;
+        if (speed < 30)  return 5;
         if (speed > 120) return 7;
-        return 5;
+        return 7;
     }
 
     private Action buildAction(double[] a, SensorModel s) {
@@ -139,7 +132,7 @@ public class KNNDriver extends SimpleDriver {
         out.steering   = steer;
         out.accelerate = Math.max(0, Math.min(1, a[1]));
         out.brake      = Math.max(0, Math.min(1, a[2]));
-        out.gear       = chooseGear(s);
+        out.gear       = gearChanger.chooseGear(s);
         return out;
     }
 
@@ -171,41 +164,6 @@ public class KNNDriver extends SimpleDriver {
             f[i] = FeatureScaler.normalize(col, raw);
         }
         return f;
-    }
-
-    private int chooseGear(SensorModel s) {
-        int    g    = s.getGear();
-        double rpm  = s.getRPM();
-        double v    = s.getSpeed();
-        double absA = Math.abs(s.getAngleToTrackAxis());
-
-        /* gestisci N / R */
-        if (g < 1) return 1;
-
-        /* blocco anti-rimbalzo: aspetta MIN_SHIFT_NS prima di nuovo cambio */
-        long now = System.nanoTime();
-        if (now - lastShiftTimeNs < MIN_SHIFT_NS) return lastGear;
-
-        /* —— logica upshift —— */
-        if (g < 6 && rpm >= RPM_UP[g - 1]) {
-            lastShiftTimeNs = now;
-            lastGear = g + 1;
-            return lastGear;
-        }
-
-        /* —— logica downshift —— */
-        boolean inCurve = absA > ANG_CURVE;
-        boolean wantShorter = (inCurve && g > 2) || (rpm <= RPM_DOWN[g - 1] && v < SPEED_MIN_DS);
-
-        if (wantShorter && g > 1) {
-            lastShiftTimeNs = now;
-            lastGear = g - 1;
-            return lastGear;
-        }
-
-        /* nessun cambio */
-        lastGear = g;
-        return g;
     }
 
     private static double euclidean(double[] a, double[] b) {
