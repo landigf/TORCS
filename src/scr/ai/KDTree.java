@@ -5,8 +5,10 @@ import java.util.*;
 
 public class KDTree implements Serializable {
     private static final long serialVersionUID = 1L;
-    private transient int dims;
+    private int dims;
     private Node root;
+    /** Numero di punti inseriti nell’albero (salvato alla build). */
+    private final int nPoints;
 
     private static class Node implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -18,7 +20,9 @@ public class KDTree implements Serializable {
 
     public KDTree(List<DataPoint> points, int dims) {
         this.dims = dims;
+        Collections.shuffle(points, new java.util.Random(42));
         this.root = build(points, 0);
+        this.nPoints = points.size();
     }
 
     private void readObject(ObjectInputStream ois)
@@ -60,7 +64,7 @@ public class KDTree implements Serializable {
         Node near = target[ax] < node.p.features[ax] ? node.left : node.right;
         Node far  = target[ax] < node.p.features[ax] ? node.right : node.left;
         search(near, target, k, pq);
-        if (!pq.isEmpty() && Math.abs(target[ax] - node.p.features[ax]) < pq.peek().dist) {
+        if (pq.size() < k || Math.abs(target[ax] - node.p.features[ax]) < pq.peek().dist) {
             search(far, target, k, pq);
         }
     }
@@ -77,5 +81,10 @@ public class KDTree implements Serializable {
             double d = a[i] - b[i]; sum += d * d;
         }
         return Math.sqrt(sum);
+    }
+
+    /** Ritorna il numero di punti contenuti nell’albero. */
+    public int size() {
+        return nPoints;
     }
 }

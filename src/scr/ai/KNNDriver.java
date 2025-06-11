@@ -2,115 +2,229 @@ package scr.ai;
 
 import java.io.*;
 import java.util.*;
+
 import scr.Action;
 import scr.SensorModel;
 import scr.SimpleDriver;
 
 public class KNNDriver extends SimpleDriver {
-    private KDTree tree;
-    private final ActionCache cache = new ActionCache();
-    private final int k = 7; // Numero di vicini da considerare
-    
-    // Configurazione delle feature (deve corrispondere al modello)
-    private String[] featureConfig = DatasetBuilder.CONFIG_WITH_SENSORS;
 
-    /* Costanti di cambio marcia */
-    private final int[] gearUp   = {5000, 6000, 6000, 6500, 7000, 0};
-    private final int[] gearDown = {   0, 2500, 3000, 3000, 3500, 3500};
+    /* ---------- modelli, cache, fallback ---------- */
+    private final KDTree      tree;
+    private final ActionCache cache     = new ActionCache();
+    private final SimpleDriver fallback = new SimpleDriver();
 
+    /* ---------- watchdog ---------- */
+    private static final long MAX_LATENCY_MS  = 15;
+    private static final long LOG_INTERVAL_NS = 10_000_000_000L;   // 10 s
+
+    private long totTime  = 0;      // somma dei ms totali
+    private long frames   = 0;      // cicli
+    private long maxDelay = 0;      // max ritardo nell’intervallo
+    private long lastLog  = System.nanoTime();
+
+    /* ---------- cambio marcia ---------- */
+    private static final double[] RPM_UP   = { 7000, 7200, 7300, 7400, 7500, 0 };
+    private static final double[] RPM_DOWN = { 0,    2800, 3000, 3200, 3500, 0 };
+    private static final long   MIN_SHIFT_NS = 300_000_000;  // 0.3 s
+    private static final double ANG_CURVE    = 0.12;         // ~7°
+    private static final double SPEED_MIN_DS = 60;           // no downshift sopra 60 km/h
+    private int   lastGear        = 1;
+    private long  lastShiftTimeNs = 0;
+
+
+    /* steering smoothing */
+    private double prevSteer = 0;
+    private static final double ALPHA = 0.7;
+
+    /* OOD guard */
+    private static final double OOD_THRESHOLD = 0.4;
+
+    /* feature set */
+    private static final String[] FEATURES = DatasetBuilder.CONFIG_WITH_SENSORS;
+
+    /* ---------- ctor ---------- */
     public KNNDriver() {
-        try (ObjectInputStream ois = new ObjectInputStream(
-                new FileInputStream("knn.tree"))) {
+        try (ObjectInputStream ois =
+                 new ObjectInputStream(new FileInputStream("knn.tree"))) {
             tree = (KDTree) ois.readObject();
+            System.out.printf("KD-Tree caricato (%d feat)%n", FEATURES.length);
         } catch (Exception e) {
             throw new RuntimeException("Cannot load KD-Tree", e);
         }
     }
 
+    /* ---------- loop ---------- */
     @Override
     public Action control(SensorModel s) {
-        double[] in = extractFeatures(s);
-        if (cache.isSimilar(in)) {
-            return buildAction(cache.get(), s);
-        }
-        List<DataPoint> nn = tree.nearest(in, k);
-        double[] a = new double[3];
-        for (DataPoint p : nn) for (int i = 0; i < 3; i++) a[i] += p.action[i];
-        for (int i = 0; i < 3; i++) a[i] /= k;
-        cache.update(in, a);
-        return buildAction(a, s);
-    }
 
-    private double[] extractFeatures(SensorModel s) {
-        double[] features = new double[featureConfig.length];
-        
-        for (int i = 0; i < featureConfig.length; i++) {
-            String feature = featureConfig[i];
-            switch (feature) {
-                // Stessa normalizzazione del DatasetBuilder
-                case "angle" -> features[i] = s.getAngleToTrackAxis();
-                case "curLapTime" -> features[i] = (s.getCurrentLapTime() - 22) / 15;
-                case "speedX" -> features[i] = (s.getSpeed() - 140) / 50;
-                case "speedY" -> features[i] = s.getLateralSpeed() / 50;
-                case "trackPos" -> features[i] = s.getTrackPosition();
-                case "gear" -> features[i] = (s.getGear() - 1) / 5.0;
-                case "rpm" -> features[i] = s.getRPM() / 10000.0;
-                case "damage" -> features[i] = s.getDamage();
-                case "lastLapTime" -> features[i] = s.getLastLapTime() / 60.0;
-                default -> {
-                    if (feature.startsWith("track")) {
-                        int idx = Integer.parseInt(feature.substring(5));
-                        features[i] = s.getTrackEdgeSensors()[idx] / 200.0;
-                    } else if (feature.startsWith("wheel")) {
-                        int idx = Integer.parseInt(feature.substring(5));
-                        features[i] = s.getWheelSpinVelocity()[idx] / 200.0;
-                    }
-                }
+        long t0 = System.nanoTime();             // START CHRONO
+
+        /* ---- K-NN oppure cache ---- */
+        double[] in  = extractFeatures(s);
+        double[] actArr = cache.lookup(in);
+
+        if (actArr == null) {                    // cache miss → KNN
+            int k = dynamicK(s.getSpeed());
+            List<DataPoint> nn = tree.nearest(in, k);
+
+            /* pesi inversi alla distanza */
+            double[] w = new double[k];
+            double wSum = 0;
+            for (int i = 0; i < k; i++) {
+                double d = euclidean(in, nn.get(i).features);
+                w[i] = 1.0 / (d + 1e-6);
+                wSum += w[i];
             }
-        }
-        return features;
-    }
-    
-    /**
-     * Restituisce la marcia ottimale sulla base di RPM e soglie
-     */
-    private int getGear(SensorModel sensors) {
-        int gear = sensors.getGear();
-        double rpm = sensors.getRPM();
+            actArr = new double[3];
+            for (int i = 0; i < k; i++)
+                for (int j = 0; j < 3; j++)
+                    actArr[j] += nn.get(i).action[j] * w[i];
+            for (int j = 0; j < 3; j++) actArr[j] /= wSum;
 
-        // Se la marcia è N o R, impostiamo 1
-        if (gear < 1) {
-            return 1;
+            /* OOD guard */
+            double nearest = euclidean(in, nn.get(0).features);
+            if (nearest > OOD_THRESHOLD) {
+                System.err.printf("\n\n====================\n[WARN] OOD %.3f > %.3f – fallback%n\n====\n",
+                                  nearest, OOD_THRESHOLD);
+                return fallback.control(s);
+            }
+            cache.put(in, actArr);
         }
-        // Up-shift
-        if (gear < 6 && rpm >= gearUp[gear - 1]) {
-            return gear + 1;
+
+        Action out = buildAction(actArr, s);
+
+        /* ---- TIMING & LOG ---- */
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000;     // STOP
+
+        // stats
+        totTime  += elapsedMs;
+        frames++;
+        if (elapsedMs > maxDelay) maxDelay = elapsedMs;
+
+        // fallback su frame lenti
+        if (elapsedMs > MAX_LATENCY_MS) {
+            System.err.printf("\n\n**************\n[WARN] slow frame %d ms > %d – fallback%n",
+                              elapsedMs, MAX_LATENCY_MS);
+            out = fallback.control(s);
         }
-        // Down-shift
-        if (gear > 1 && rpm <= gearDown[gear - 1]) {
-            return gear - 1;
+
+        // log ogni 10 s
+        long now = System.nanoTime();
+        if (now - lastLog >= LOG_INTERVAL_NS) {
+            double avg = (double) totTime / frames;
+            System.out.printf("\n***\n*****\n******\n[INFO] avg %.2f ms   max %d ms%n\n\n", avg, maxDelay);
+            lastLog = now;
+            maxDelay = 0;                        // reset per prossimo intervallo
         }
-        // Mantieni
-        return gear;
+
+        return out;
+    }
+
+    /* ---------- utility ---------- */
+
+    private int dynamicK(double speed) {
+        if (speed < 30)  return 3;
+        if (speed > 120) return 7;
+        return 5;
     }
 
     private Action buildAction(double[] a, SensorModel s) {
         Action out = new Action();
-    
-        // Usa sempre le azioni predette dal KNN
-        out.steering = a[0];
-        out.accelerate = a[1];
-        out.brake = a[2];
-        
-        // Usa le regole ottimizzate per il cambio marcia
-        out.gear = getGear(s);
-        
+
+        double steer = Math.max(-1, Math.min(1, a[0]));
+        steer = ALPHA * steer + (1 - ALPHA) * prevSteer;
+        prevSteer = steer;
+
+        out.steering   = steer;
+        out.accelerate = Math.max(0, Math.min(1, a[1]));
+        out.brake      = Math.max(0, Math.min(1, a[2]));
+        out.gear       = chooseGear(s);
         return out;
     }
 
-    @Override public void reset() { 
-        cache.update(null, null); 
+    private double[] extractFeatures(SensorModel s) {
+        double[] f = new double[FEATURES.length];
+        for (int i = 0; i < FEATURES.length; i++) {
+            String col = FEATURES[i];
+            double raw;
+            switch (col) {
+                case "angle"       -> raw = s.getAngleToTrackAxis();
+                case "curLapTime"  -> raw = s.getCurrentLapTime();
+                case "speedX"      -> raw = s.getSpeed();
+                case "speedY"      -> raw = s.getLateralSpeed();
+                case "trackPos"    -> raw = s.getTrackPosition();
+                case "gear"        -> raw = s.getGear();
+                case "rpm"         -> raw = s.getRPM();
+                case "damage"      -> raw = s.getDamage();
+                case "lastLapTime" -> raw = s.getLastLapTime();
+                default -> {
+                    if (col.startsWith("track")) {
+                        int idx = Integer.parseInt(col.substring(5));
+                        raw = s.getTrackEdgeSensors()[idx];
+                    } else if (col.startsWith("wheel")) {
+                        int idx = Integer.parseInt(col.substring(5));
+                        raw = s.getWheelSpinVelocity()[idx];
+                    } else raw = 0;
+                }
+            }
+            f[i] = FeatureScaler.normalize(col, raw);
+        }
+        return f;
     }
-    
+
+    private int chooseGear(SensorModel s) {
+        int    g    = s.getGear();
+        double rpm  = s.getRPM();
+        double v    = s.getSpeed();
+        double absA = Math.abs(s.getAngleToTrackAxis());
+
+        /* gestisci N / R */
+        if (g < 1) return 1;
+
+        /* blocco anti-rimbalzo: aspetta MIN_SHIFT_NS prima di nuovo cambio */
+        long now = System.nanoTime();
+        if (now - lastShiftTimeNs < MIN_SHIFT_NS) return lastGear;
+
+        /* —— logica upshift —— */
+        if (g < 6 && rpm >= RPM_UP[g - 1]) {
+            lastShiftTimeNs = now;
+            lastGear = g + 1;
+            return lastGear;
+        }
+
+        /* —— logica downshift —— */
+        boolean inCurve = absA > ANG_CURVE;
+        boolean wantShorter = (inCurve && g > 2) || (rpm <= RPM_DOWN[g - 1] && v < SPEED_MIN_DS);
+
+        if (wantShorter && g > 1) {
+            lastShiftTimeNs = now;
+            lastGear = g - 1;
+            return lastGear;
+        }
+
+        /* nessun cambio */
+        lastGear = g;
+        return g;
+    }
+
+    private static double euclidean(double[] a, double[] b) {
+        double sum = 0;
+        for (int i = 0; i < a.length; i++) {
+            double d = a[i] - b[i];
+            sum += d * d;
+        }
+        return Math.sqrt(sum);
+    }
+
+    /* ---------- lifecycle ---------- */
+    @Override
+    public void reset() {
+        cache.clear();
+        prevSteer = 0;
+        totTime = frames = maxDelay = 0;
+        lastLog = System.nanoTime();
+    }
+
     @Override public void shutdown() {}
 }

@@ -18,7 +18,7 @@ Write-Host ""
 
 # Step 2: Compilazione classi KD-Tree
 Write-Host "Step 2: Compilazione KD-Tree..." -ForegroundColor Cyan
-javac -d classes src/scr/ai/DataPoint.java src/scr/ai/KDTree.java src/scr/ai/DatasetBuilder.java
+javac -d classes src/scr/ai/DataPoint.java src/scr/ai/FeatureScaler.java src/scr/ai/KDTree.java src/scr/ai/DatasetBuilder.java
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERRORE: Compilazione fallita!" -ForegroundColor Red

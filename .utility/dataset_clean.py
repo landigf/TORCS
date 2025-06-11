@@ -35,8 +35,8 @@ for csv_file in csv_files:
         df_clean = df_clean[mask]
     
     # Remove rows where lastLapTime == x
-    if 'lastLapTime' in df_clean.columns:
-        df_clean = df_clean[df_clean['lastLapTime'] != 112.276]
+    #if 'lastLapTime' in df_clean.columns:
+    #    df_clean = df_clean[df_clean['lastLapTime'] != 112.276]
     
     print(f"File: {os.path.basename(csv_file)} - Righe totali: {len(df)}, dopo pulizia: {len(df_clean)}")
     

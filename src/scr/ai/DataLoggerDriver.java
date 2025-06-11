@@ -13,9 +13,18 @@ public class DataLoggerDriver extends SimpleDriver {
     private PrintWriter log;
     private long t0;
 
-    /* Costanti di cambio marcia */
-    private final int[] gearUp   = {5000, 6000, 6000, 6500, 7000, 0};
-    private final int[] gearDown = {   0, 2500, 3000, 3000, 3500, 3500};
+    /* ---------- cambio marcia ---------- */
+    private static final double[] GEAR_RATIO = { 0, 3.60, 2.19, 1.59, 1.29, 1.05, 0.88 };
+
+    /* soglie up / down a isteresi larga */
+    private static final double[] RPM_UP   = { 7200, 7400, 7600, 7800, 8000, 99999 };
+    private static final double[] RPM_DOWN = { 0,    2600, 3000, 3200, 3500, 4000 };
+
+    private static final double ANG_CURVE = 0.12;               // 7°
+    private static final long   SHIFT_DEAD_NS = 250_000_000;     // 0,25 s
+    private int  lastGear = 1;
+    private long lastShift = 0;
+    private double lastSpeed = 0;
 
     // Stato tasti
     private boolean leftPressed  = false;
@@ -69,25 +78,60 @@ public class DataLoggerDriver extends SimpleDriver {
 
     /**
      * Restituisce la marcia ottimale sulla base di RPM e soglie
-     */
-    private int getGear(SensorModel sensors) {
-        int gear = sensors.getGear();
-        double rpm = sensors.getRPM();
+    */
+    private int chooseGear(SensorModel s) {
+        int    g   = s.getGear();
+        double rpm = s.getRPM();
+        double v   = s.getSpeed();
+        double aa  = Math.abs(s.getAngleToTrackAxis());
 
-        // Se la marcia è N o R, impostiamo 1
-        if (gear < 1) {
-            return 1;
+        if (g < 1) return 1;
+
+        long now = System.nanoTime();
+        double decel = lastSpeed - v;                 // km/h persi nell’ultimo tick
+        if (g == 6 && decel >= 1) {                   // soglia frenata
+            lastShift = now;
+            lastGear  = g - 1;
+            lastSpeed = v;
+            return lastGear;
         }
-        // Up-shift
-        if (gear < 6 && rpm >= gearUp[gear - 1]) {
-            return gear + 1;
+
+        
+        if (now - lastShift < SHIFT_DEAD_NS) {        // isteresi tempo
+            lastSpeed = v;
+            return lastGear;
         }
-        // Down-shift
-        if (gear > 1 && rpm <= gearDown[gear - 1]) {
-            return gear - 1;
+
+
+        /* ---------- upshift standard ---------- */
+        if (g < 6 && rpm >= RPM_UP[g - 1]) {
+            double rpmAfterUp = rpm * (GEAR_RATIO[g] / GEAR_RATIO[g + 1]);
+            if (rpmAfterUp >= 3000) {
+                lastShift = now;
+                lastGear  = g + 1;
+                lastSpeed = v;
+                return lastGear;
+            }
         }
-        // Mantieni
-        return gear;
+
+        /* ---------- downshift standard ---------- */
+        boolean needDown =
+            rpm <= RPM_DOWN[g - 1] || (aa > ANG_CURVE && rpm < 5500);
+
+        if (needDown && g > 1) {
+            double rpmAfterDown = rpm * (GEAR_RATIO[g] / GEAR_RATIO[g - 1]);
+            if (rpmAfterDown <= 9000) {
+                lastShift = now;
+                lastGear  = g - 1;
+                lastSpeed = v;
+                return lastGear;
+            }
+        }
+
+        /* nessun cambio */
+        lastSpeed = v;
+        lastGear  = g;
+        return g;
     }
 
     @Override
@@ -97,7 +141,7 @@ public class DataLoggerDriver extends SimpleDriver {
         if (a == null) a = new Action();
 
         // 2) Cambio marcia automatico
-        a.gear = getGear(s);
+        a.gear = chooseGear(s);
 
         // 3) Raccolta dati sensori
         double angle       = s.getAngleToTrackAxis();
