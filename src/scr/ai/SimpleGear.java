@@ -3,7 +3,6 @@ package scr.ai;
 import scr.SensorModel;
 
 public class SimpleGear {
-    
     /* ---------- cambio marcia ---------- */
     private static final double[] GEAR_RATIO = { 0, 3.60, 2.19, 1.59, 1.29, 1.05, 0.88 };
 
@@ -17,6 +16,11 @@ public class SimpleGear {
     private long lastShift = 0;
     private double lastSpeed = 0;
 
+    /**
+     * Crea un cambio marcia semplice
+     */
+    public SimpleGear() {}
+    
     /**
      * Restituisce la marcia ottimale sulla base di RPM e soglie
     */
