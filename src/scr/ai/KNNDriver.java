@@ -16,7 +16,7 @@ public class KNNDriver extends SimpleDriver {
 
     /* ---------- watchdog ---------- */
     private static final long MAX_LATENCY_MS  = 15;
-    private static final long LOG_INTERVAL_NS = 5_000_000_000L;   // 10 s
+    private static final long LOG_INTERVAL_NS = 5_000_000_000L;   // 5 s
 
     private long totTime  = 0;      // somma dei ms totali
     private long frames   = 0;      // cicli
@@ -78,7 +78,7 @@ public class KNNDriver extends SimpleDriver {
             /* OOD guard */
             double nearest = euclidean(in, nn.get(0).features);
             if (nearest > OOD_THRESHOLD) {
-                System.err.printf("\n\n====================\n[WARN] OOD %.3f > %.3f – fallback%n\n====\n",
+                System.err.printf("\n\n====================\n[WARN] OOD %.3f > %.3f - fallback%n\n====\n",
                                   nearest, OOD_THRESHOLD);
                 return fallback.control(s);
             }
@@ -97,12 +97,12 @@ public class KNNDriver extends SimpleDriver {
 
         // fallback su frame lenti
         if (elapsedMs > MAX_LATENCY_MS) {
-            System.err.printf("\n\n**************\n[WARN] slow frame %d ms > %d – fallback%n",
+            System.err.printf("\n\n**************\n[WARN] slow frame %d ms > %d - fallback%n",
                               elapsedMs, MAX_LATENCY_MS);
             out = fallback.control(s);
         }
 
-        // log ogni 10 s
+        // log ogni 5 s
         long now = System.nanoTime();
         if (now - lastLog >= LOG_INTERVAL_NS) {
             double avg = (double) totTime / frames;

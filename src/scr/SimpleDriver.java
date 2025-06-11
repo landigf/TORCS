@@ -3,7 +3,7 @@ package scr;
 import java.io.Serializable;
 
 /**
- * SimpleDriver – versione 2025‑06‑11 con cambio marcia evoluto.
+ * SimpleDriver - versione 2025‑06‑11 con cambio marcia evoluto.
  * <p>
  * Integriamo l’algoritmo di shifting suggerito dall’utente:
  * ‑ isteresi ampia su RPM
@@ -119,7 +119,7 @@ public class SimpleDriver extends Controller implements Serializable {
         return targetAngle / STEER_LOCK;
     }
 
-    /* ===== target‑speed fuzzy + “turbo” on straights ===== */
+    /* ===== target‑speed fuzzy + "turbo" on straights ===== */
     private float getAccel(SensorModel sensors) {
         if (sensors.getTrackPosition() > -1 && sensors.getTrackPosition() < 1) {
             float center = (float) sensors.getTrackEdgeSensors()[9];
