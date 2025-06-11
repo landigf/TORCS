@@ -23,14 +23,7 @@ public class KNNDriver extends SimpleDriver {
     private long maxDelay = 0;      // max ritardo nell’intervallo
     private long lastLog  = System.nanoTime();
 
-    /* ---------- cambio marcia ---------- */
-    private static final double[] RPM_UP   = { 7000, 7200, 7300, 7400, 7500, 0 };
-    private static final double[] RPM_DOWN = { 0,    2800, 3000, 3200, 3500, 0 };
-    private static final long   MIN_SHIFT_NS = 300_000_000;  // 0.3 s
-    private static final double ANG_CURVE    = 0.12;         // ~7°
-    private static final double SPEED_MIN_DS = 60;           // no downshift sopra 60 km/h
-    private int   lastGear        = 1;
-    private long  lastShiftTimeNs = 0;
+    private SimpleGear gearChanger = new SimpleGear();
 
 
     /* steering smoothing */
@@ -139,7 +132,7 @@ public class KNNDriver extends SimpleDriver {
         out.steering   = steer;
         out.accelerate = Math.max(0, Math.min(1, a[1]));
         out.brake      = Math.max(0, Math.min(1, a[2]));
-        out.gear       = chooseGear(s);
+        out.gear       = gearChanger.chooseGear(s);
         return out;
     }
 
@@ -171,41 +164,6 @@ public class KNNDriver extends SimpleDriver {
             f[i] = FeatureScaler.normalize(col, raw);
         }
         return f;
-    }
-
-    private int chooseGear(SensorModel s) {
-        int    g    = s.getGear();
-        double rpm  = s.getRPM();
-        double v    = s.getSpeed();
-        double absA = Math.abs(s.getAngleToTrackAxis());
-
-        /* gestisci N / R */
-        if (g < 1) return 1;
-
-        /* blocco anti-rimbalzo: aspetta MIN_SHIFT_NS prima di nuovo cambio */
-        long now = System.nanoTime();
-        if (now - lastShiftTimeNs < MIN_SHIFT_NS) return lastGear;
-
-        /* —— logica upshift —— */
-        if (g < 6 && rpm >= RPM_UP[g - 1]) {
-            lastShiftTimeNs = now;
-            lastGear = g + 1;
-            return lastGear;
-        }
-
-        /* —— logica downshift —— */
-        boolean inCurve = absA > ANG_CURVE;
-        boolean wantShorter = (inCurve && g > 2) || (rpm <= RPM_DOWN[g - 1] && v < SPEED_MIN_DS);
-
-        if (wantShorter && g > 1) {
-            lastShiftTimeNs = now;
-            lastGear = g - 1;
-            return lastGear;
-        }
-
-        /* nessun cambio */
-        lastGear = g;
-        return g;
     }
 
     private static double euclidean(double[] a, double[] b) {
