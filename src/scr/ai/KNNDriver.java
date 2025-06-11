@@ -16,7 +16,7 @@ public class KNNDriver extends SimpleDriver {
 
     /* ---------- watchdog ---------- */
     private static final long MAX_LATENCY_MS  = 15;
-    private static final long LOG_INTERVAL_NS = 10_000_000_000L;   // 10 s
+    private static final long LOG_INTERVAL_NS = 5_000_000_000L;   // 10 s
 
     private long totTime  = 0;      // somma dei ms totali
     private long frames   = 0;      // cicli
@@ -31,7 +31,7 @@ public class KNNDriver extends SimpleDriver {
     private static final double ALPHA = 0.7;
 
     /* OOD guard */
-    private static final double OOD_THRESHOLD = 0.4;
+    private static final double OOD_THRESHOLD = 1.5;
 
     /* feature set */
     private static final String[] FEATURES = DatasetBuilder.CONFIG_WITH_SENSORS;
@@ -106,7 +106,7 @@ public class KNNDriver extends SimpleDriver {
         long now = System.nanoTime();
         if (now - lastLog >= LOG_INTERVAL_NS) {
             double avg = (double) totTime / frames;
-            System.out.printf("\n***\n*****\n******\n[INFO] avg %.2f ms   max %d ms%n\n\n", avg, maxDelay);
+            System.out.printf("\n***\n*****\n******\n\n\n\n[INFO] avg %.2f ms   max %d ms%n\n\n\n\n\n\n\n", avg, maxDelay);
             lastLog = now;
             maxDelay = 0;                        // reset per prossimo intervallo
         }
@@ -117,9 +117,9 @@ public class KNNDriver extends SimpleDriver {
     /* ---------- utility ---------- */
 
     private int dynamicK(double speed) {
-        if (speed < 30)  return 3;
+        if (speed < 30)  return 5;
         if (speed > 120) return 7;
-        return 5;
+        return 7;
     }
 
     private Action buildAction(double[] a, SensorModel s) {
