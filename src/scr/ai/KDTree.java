@@ -7,6 +7,8 @@ public class KDTree implements Serializable {
     private static final long serialVersionUID = 1L;
     private int dims;
     private Node root;
+    /** Numero di punti inseriti nell’albero (salvato alla build). */
+    private final int nPoints;
 
     private static class Node implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -20,6 +22,7 @@ public class KDTree implements Serializable {
         this.dims = dims;
         Collections.shuffle(points, new java.util.Random(42));
         this.root = build(points, 0);
+        this.nPoints = points.size();
     }
 
     private void readObject(ObjectInputStream ois)
@@ -78,5 +81,10 @@ public class KDTree implements Serializable {
             double d = a[i] - b[i]; sum += d * d;
         }
         return Math.sqrt(sum);
+    }
+
+    /** Ritorna il numero di punti contenuti nell’albero. */
+    public int size() {
+        return nPoints;
     }
 }

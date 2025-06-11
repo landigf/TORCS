@@ -1,58 +1,33 @@
-
 package scr.ai;
 
-import java.io.Serializable;
+/** Centralizza la normalizzazione delle feature, incluse le derivate. */
+public final class FeatureScaler {
 
-/**
- * Centralized feature scaling utility. The rules are
- * the same between offline dataset building and online inference.
- * If you change a rule here, both phases automatically share it.
- *
- * All values are approximately mapped in the range [-1, 1].
- */
-public class FeatureScaler implements Serializable {
-    private static final long serialVersionUID = 1L;
+    private FeatureScaler() {}              // blocca le istanze
 
-    /** Normalise a raw value for the given feature name. */
-    public static double normalize(String feature, double val) {
-        return switch (feature) {
-            /* Angle already ~[-π,π] but in TORCS it's small. Map directly. */
-            case "angle" -> val;
+    public static double normalize(String f, double raw) {
+        return switch (f) {
+            /* direzione su cerchio unitario */
+            case "angleSin", "angleCos" -> raw;          // già [-1,1]
+            case "angle"                -> raw;
 
-            /* Lap time centred around 22 s with spread ≈ 15 s */
-            case "curLapTime" -> (val - 22.0) / 15.0;
+            /* motore / velocità */
+            case "rpm"    -> raw / 10000.0;
+            case "speedX" -> (raw - 140) / 50.0;
+            case "speedY" ->  raw / 50.0;
 
-            /* Longitudinal speed (km/h). Expect 0‑300. Centre at 140 */
-            case "speedX" -> (val - 140.0) / 50.0;
+            /* posizione laterale */
+            case "trackPos" -> raw;                      // -1…1
 
-            /* Lateral speed. */
-            case "speedY" -> val / 50.0;
+            /* curvatura stimata */
+            case "curv" -> raw / 100.0;                  // scala empirica
 
-            /* Track position already in [‑1,1] */
-            case "trackPos" -> val;
-
-            /* Gear 1‑6 -> map to [0,1] */
-            case "gear" -> (val - 1.0) / 5.0;
-
-            /* RPM up to 10k. */
-            case "rpm" -> val / 10000.0;
-
-            /* Damage can reach a few thousands. Scale conservatively. */
-            case "damage" -> val / 1000.0;
-
-            /* Last lap time seconds. */
-            case "lastLapTime" -> val / 60.0;
-
-            /* Track sensors (0‑200) */
+            /* sensori pista / ruote */
             default -> {
-                if (feature.startsWith("track")) {
-                    yield val / 200.0;
-                } else if (feature.startsWith("wheel")) {
-                    yield val / 200.0;
-                } else {
-                    /* Fallback: leave unchanged */
-                    yield val;
-                }
+                if (f.startsWith("track") || f.startsWith("wheel"))
+                    yield raw / 200.0;
+                else
+                    yield raw;                           // fallback
             }
         };
     }
