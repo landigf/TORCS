@@ -11,7 +11,7 @@ import java.util.Deque;
  */
 public class ActionCache {
     private static final int MAX_SIZE = 50;
-    private static final double TOL = 0.03;  // Empirically: ~3 % of typical feature norm
+    private static final double TOL = 0.1;  // Empirically: ~3 % of typical feature norm
 
     private static class Entry {
         final double[] in;
