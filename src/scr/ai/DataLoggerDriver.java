@@ -14,8 +14,8 @@ public class DataLoggerDriver extends SimpleDriver {
     private long t0;
 
     /* Costanti di cambio marcia */
-    private final int[] gearUp   = {5000, 6000, 6000, 6500, 7000, 0};
-    private final int[] gearDown = {   0, 2500, 3000, 3000, 3500, 3500};
+    private final double[] RPM_UP   = { 7000, 7200, 7300, 7400, 7500, 0 };
+    private final double[] RPM_DOWN = { 0,    2800, 3000, 3200, 3500, 0 };
 
     // Stato tasti
     private boolean leftPressed  = false;
@@ -69,24 +69,26 @@ public class DataLoggerDriver extends SimpleDriver {
 
     /**
      * Restituisce la marcia ottimale sulla base di RPM e soglie
-     */
-    private int getGear(SensorModel sensors) {
-        int gear = sensors.getGear();
-        double rpm = sensors.getRPM();
+    */
+    private int getGear(SensorModel s) {
+        int    gear      = s.getGear();
+        double rpm       = s.getRPM();
+        double speed     = s.getSpeed();            // km/h
+        double absAngle  = Math.abs(s.getAngleToTrackAxis());   // rad
 
-        // Se la marcia è N o R, impostiamo 1
-        if (gear < 1) {
-            return 1;
+        /* gestisci N / R */
+        if (gear < 1) return 1;
+
+        /* —— bias verso la scalata in curva o a bassa velocità —— */
+        boolean inCorner = absAngle > 0.10 || speed < 55;   // 0.10 rad ≈ 6°
+        if (inCorner && gear > 2) {
+            return gear - 1;        // anticipo di un rapporto
         }
-        // Up-shift
-        if (gear < 6 && rpm >= gearUp[gear - 1]) {
-            return gear + 1;
-        }
-        // Down-shift
-        if (gear > 1 && rpm <= gearDown[gear - 1]) {
-            return gear - 1;
-        }
-        // Mantieni
+
+        /* —— logica classica su giri motore —— */
+        if (gear < 6 && rpm >= RPM_UP[gear - 1])       return gear + 1;
+        if (gear > 1 && rpm <= RPM_DOWN[gear - 1])     return gear - 1;
+
         return gear;
     }
 
