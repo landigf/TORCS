@@ -142,6 +142,7 @@ public class DatasetBuilder {
         };
 
         System.out.printf("Build KD-Tree config='%s'%n", cfg);
+        System.out.printf("Configurazione: %s%n", Arrays.toString(featCols));
         List<DataPoint> pts = loadCSV(csv, featCols);
         KDTree tree = new KDTree(pts, featCols.length);
         try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(model))) {

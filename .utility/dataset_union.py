@@ -22,7 +22,7 @@ if csv_files:
         print(f"{os.path.basename(f)}: {num_rows} righe")
         df_list.append(df)
     union_df = pd.concat(df_list, ignore_index=True)
-    union_df = union_df.sort_values('curLapTime').reset_index(drop=True)
+    union_df = union_df.sort_values('distanceFromStart').reset_index(drop=True)
     print(f"Totale righe: {len(union_df)}")
     print("Head del dataset unito:")
     print(union_df.head())

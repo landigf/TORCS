@@ -27,10 +27,12 @@ public final class FeatureScaler {
 
             /* sensori pista / ruote */
             default -> {
-                if (f.startsWith("track") || f.startsWith("wheel"))
-                    yield raw / 200.0;
-                else
-                    yield raw;                           // fallback
+            if (f.startsWith("track"))
+                yield raw / 200.0;
+            else if (f.startsWith("wheel"))
+                yield raw / 245.0;
+            else
+                yield raw;                           // fallback
             }
         };
     }
