@@ -79,7 +79,7 @@ public class KNNDriver extends SimpleDriver {
         //double[] actArr = cache.lookup(in);
         double[] actArr = null;  // inizializza come null per KNN
 
-        int k = dynamicK(s.getSpeed());
+        int k = dynamicK(s);
         List<DataPoint> nn = tree.nearest(in, k);
         double nearest = weightedDist(in, nn.get(0).features);
         if (nearest > OOD_THRESHOLD) {
@@ -106,19 +106,16 @@ public class KNNDriver extends SimpleDriver {
             }
             System.out.printf("\n\n[INFO] KNN con k=%d%n\n\n\n\n\n", k);
 
-            /* pesi inversi alla distanza */
-            double[] w = new double[k];
-            double wSum = 0;
-            for (int i = 0; i < k; i++) {
-                double d = weightedDist(in, nn.get(i).features);
-                w[i] = 1.0 / (d + 1e-6);
-                wSum += w[i];
-            }
+            /* pesi uguali per tutti i vicini */
             actArr = new double[3];
-            for (int i = 0; i < k; i++)
-                for (int j = 0; j < 3; j++)
-                    actArr[j] += nn.get(i).action[j] * w[i];
-            for (int j = 0; j < 3; j++) actArr[j] /= wSum;
+            for (int i = 0; i < k; i++) {
+                for (int j = 0; j < 3; j++) {
+                    actArr[j] += nn.get(i).action[j];
+                }
+            }
+            for (int j = 0; j < 3; j++) {
+                actArr[j] /= k;
+            }
 
             /* OOD guard */
             
@@ -209,8 +206,11 @@ public class KNNDriver extends SimpleDriver {
 
     /* ---------- utility ---------- */
 
-    private int dynamicK(double speed) {
-        return 6;
+    private int dynamicK(SensorModel s) {
+        double absA = Math.abs(s.getAngleToTrackAxis());
+        if (absA > 0.3) return 5;  // curva stretta
+        if (absA > 0.1) return 6;  // curva media
+        return 7;  // rettilineo o curva larga
     }
 
     private Action buildAction(double[] a, SensorModel s) {
