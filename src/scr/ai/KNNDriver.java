@@ -31,15 +31,15 @@ public class KNNDriver extends SimpleDriver {
     //private static final double ALPHA = 0.2;
 
     /* OOD guard - OutOfDistribution */
-    private static final double OOD_THRESHOLD = 1.0;
+    private static final double OOD_THRESHOLD = 0.6;
 
     /* feature set */
     private static final String[] FEATURES = DatasetBuilder.CONFIG_WITH_SENSORS;
 
     private static final Map<String, Double> FEAT_W = Map.of(
-        "distanceFromStart", 4.0,   // domina il matching (↑ ⇒ curva giusta)
-        "angle",              2.0,
-        "trackPos",           2.0,
+        "distanceFromStart", 4.0,   // domina il matching
+        "angle",              1.5,
+        "trackPos",           2.5,
         /* tutto il resto */  "default", 1.0);
 
     boolean debug = false;  // flag per debug
@@ -81,7 +81,14 @@ public class KNNDriver extends SimpleDriver {
 
         int k = dynamicK(s.getSpeed());
         List<DataPoint> nn = tree.nearest(in, k);
-        double nearest = euclidean(in, nn.get(0).features);
+        double nearest = weightedDist(in, nn.get(0).features);
+        if (nearest > OOD_THRESHOLD) {
+            System.err.printf("\n\n====================\n[WARN] OOD %.3f > %.3f - fallback%n\n====\n",
+                                nearest, OOD_THRESHOLD);
+            //prevSteer = 0;  // reset steering
+            return fallback.control(s);
+        }
+
         if (actArr == null) {        // cache miss → KNN
             // Stampa tutti i vicini trovati per debug
             if (nn.size() < k) {
@@ -103,7 +110,7 @@ public class KNNDriver extends SimpleDriver {
             double[] w = new double[k];
             double wSum = 0;
             for (int i = 0; i < k; i++) {
-                double d = euclidean(in, nn.get(i).features);
+                double d = weightedDist(in, nn.get(i).features);
                 w[i] = 1.0 / (d + 1e-6);
                 wSum += w[i];
             }
@@ -115,32 +122,27 @@ public class KNNDriver extends SimpleDriver {
 
             /* OOD guard */
             
-            if (nearest > OOD_THRESHOLD) {
-                System.err.printf("\n\n====================\n[WARN] OOD %.3f > %.3f - fallback%n\n====\n",
-                                  nearest, OOD_THRESHOLD);
-                //prevSteer = 0;  // reset steering
-                return fallback.control(s);
-            }
+            
             //cache.put(in, actArr);
         }
 
         Action knnAction = buildAction(actArr, s);
         Action safeAction = fallback.control(s);
-        double lambda = Math.max(0, 1 - nearest / OOD_THRESHOLD);
-        // fusione tra KNN e fallback
-        Action out = new Action();
-        out.steering   = lambda * knnAction.steering + (1 - lambda) * safeAction.steering;
-        // Aumenta il peso del KNN per l'accelerazione
-        double forceKnn = 0.2;  // forza del KNN sull'accelerazione
-        if (centralTrack > 100 || s.getSpeed() > 40) forceKnn = 0.9;
-        double knnWeight = Math.min(1.0, lambda + forceKnn);
-        out.accelerate = knnWeight * knnAction.accelerate + (1 - knnWeight) * safeAction.accelerate;
-        out.brake      = knnWeight * knnAction.brake + (1 - knnWeight) * safeAction.brake;
-        out.gear       = gearChanger.chooseGear(s);  // cambio marcia sempre da fallback
-        /* --- debug --- */
-        System.out.printf("\nknnAction: %s, \nsafeAction: %s, lambda: %.2f%n",
-                          knnAction, safeAction, lambda);
+        // double lambda = Math.max(0, 1 - nearest / OOD_THRESHOLD);
+        // lambda = 1; // DEBUG: forza lambda a 1 per test
 
+        // // fusione tra KNN e fallback
+        // Action out = new Action();
+        // out.steering   = lambda * knnAction.steering + (1 - lambda) * safeAction.steering;
+        // // Aumenta il peso del KNN per l'accelerazione
+        // double forceKnn = 0.2;  // forza del KNN sull'accelerazione
+        // if (centralTrack > 100 || s.getSpeed() > 40) forceKnn = 0.9;
+        // double knnWeight = Math.min(1.0, lambda + forceKnn);
+        // out.accelerate = knnWeight * knnAction.accelerate + (1 - knnWeight) * safeAction.accelerate;
+        // out.brake      = knnWeight * knnAction.brake + (1 - knnWeight) * safeAction.brake;
+        /* --- debug --- */
+        //System.out.printf("\nknnAction: %s, \nsafeAction: %s, lambda: %.2f%n",knnAction, safeAction, lambda);
+        Action out = knnAction;  // usa solo KNN per ora
         /* ---- TIMING & LOG ---- */
         long elapsedMs = (System.nanoTime() - t0) / 1_000_000;     // STOP
 
@@ -197,11 +199,9 @@ public class KNNDriver extends SimpleDriver {
         System.out.printf("--------Steering: %.3f, Accel: %.3f, Brake: %.3f, Gear: %d%n",
                           out.steering, out.accelerate, out.brake, out.gear);
 
-        if (debug == false) {
-            out.steering = 0;
-            debug = true;  // attiva debug solo una volta
-        } else {
-            debug = false;  // disattiva debug per il prossimo ciclo
+
+        if (frames % 2 == 0) {
+            out.steering = 0;  // reset steering
         }
 
         return out;
@@ -210,7 +210,7 @@ public class KNNDriver extends SimpleDriver {
     /* ---------- utility ---------- */
 
     private int dynamicK(double speed) {
-        return 5;
+        return 6;
     }
 
     private Action buildAction(double[] a, SensorModel s) {
@@ -260,11 +260,28 @@ public class KNNDriver extends SimpleDriver {
         return f;
     }
 
-    private static double euclidean(double[] a, double[] b) {
+    // private static double euclidean(double[] a, double[] b) {
+    //     double sum = 0;
+    //     for (int i = 0; i < a.length; i++) {
+    //         double d = a[i] - b[i];
+    //         sum += d * d;
+    //     }
+    //     return Math.sqrt(sum);
+    // }
+
+    /* distanza pesata + wrap-around sulla linea di partenza */
+    private static double weightedDist(double[] a, double[] b) {
         double sum = 0;
         for (int i = 0; i < a.length; i++) {
-            double d = a[i] - b[i];
-            sum += d * d;
+            String col  = FEATURES[i];
+            double w    = FEAT_W.getOrDefault(col, FEAT_W.get("default"));
+            double diff = a[i] - b[i];
+
+            /* correzione ciclica SOLO per distanceFromStart (range normalizzato 0-1) */
+            if ("distanceFromStart".equals(col))
+                diff = Math.min(Math.abs(diff), 1.0 - Math.abs(diff));
+
+            sum += w * diff * diff;
         }
         return Math.sqrt(sum);
     }

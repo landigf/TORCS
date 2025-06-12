@@ -27,7 +27,7 @@ public class DatasetBuilder {
         // derivate
         "angle", "gear",
         // motore / velocità
-        "rpm", "speedX", "speedY",
+        "speedX", "speedY",
         // visibilità pista (5 sensori)
         "track0", "track5", "track9","track13", "track18",
         // posizione
