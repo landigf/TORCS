@@ -27,7 +27,7 @@ public class DataLoggerDriver extends SimpleDriver {
             File f = new File("drive_log.csv");
             log = new PrintWriter(new FileWriter(f, true), true);
             if (f.length() == 0) {
-                String header = "time,angle,curLapTime,damage,gear,rpm,speedX,speedY,lastLapTime," +
+                String header = "time,angle,curLapTime,distanceFromStart,fuel,damage,gear,rpm,speedX,speedY,speedZ,lastLapTime," +
                                 IntStream.range(0,19).mapToObj(i->"track"+i)
                                          .collect(Collectors.joining(",")) +
                                 ",wheel0,wheel1,wheel2,wheel3,trackPos,steer,accel,brake";
@@ -78,10 +78,13 @@ public class DataLoggerDriver extends SimpleDriver {
         // 3) Raccolta dati sensori
         double angle       = s.getAngleToTrackAxis();
         double curLapTime  = s.getCurrentLapTime();
+        double distanceFromStart = s.getDistanceFromStartLine();
+        double fuel        = s.getFuelLevel();
         double damage      = s.getDamage();
         double rpm         = s.getRPM();
         double speedX      = s.getSpeed();
         double speedY      = s.getLateralSpeed();
+        double speedZ      = s.getZSpeed();
         double lastLapTime = s.getLastLapTime();
         double[] trackArr  = s.getTrackEdgeSensors();
         double[] wheelSpin = s.getWheelSpinVelocity();
@@ -95,10 +98,11 @@ public class DataLoggerDriver extends SimpleDriver {
         // 5) Log CSV
         StringBuilder sb = new StringBuilder();
         sb.append(time).append(',').append(angle).append(',')
-          .append(curLapTime).append(',').append(damage).append(',')
+          .append(curLapTime).append(',').append(distanceFromStart).append(',')
+          .append(fuel).append(',').append(damage).append(',')
           .append(a.gear).append(',').append(rpm).append(',')
           .append(speedX).append(',').append(speedY).append(',')
-          .append(lastLapTime);
+          .append(speedZ).append(',').append(lastLapTime);
         for (double d : trackArr) sb.append(',').append(d);
         for (double w : wheelSpin) sb.append(',').append(w);
         sb.append(',').append(trackPos)

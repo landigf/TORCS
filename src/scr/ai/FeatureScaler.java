@@ -15,12 +15,15 @@ public final class FeatureScaler {
             case "rpm"    -> raw / 10000.0;
             case "speedX" -> (raw - 140) / 50.0;
             case "speedY" ->  raw / 50.0;
+            case "gear"   -> (raw-1) / 6.0;                   // 1…6
 
             /* posizione laterale */
             case "trackPos" -> raw;                      // -1…1
 
             /* curvatura stimata */
             case "curv" -> raw / 100.0;                  // scala empirica
+
+            case "distanceFromStart" -> raw / 5784.10; // scala empirica
 
             /* sensori pista / ruote */
             default -> {

@@ -25,13 +25,13 @@ public class DatasetBuilder {
 
     public static final String[] CONFIG_WITH_SENSORS = {
         // derivate
-        "angle", 
+        "angle", "gear",
         // motore / velocità
         "rpm", "speedX", "speedY",
         // visibilità pista (5 sensori)
         "track0", "track5", "track9","track13", "track18",
         // posizione
-        "trackPos"
+        "trackPos", "distanceFromStart"
     };
 
     public static final String[] CONFIG_ALL_SENSORS = {

@@ -11,11 +11,11 @@ public class KNNDriver extends SimpleDriver {
 
     /* ---------- modelli, cache, fallback ---------- */
     private final KDTree      tree;
-    private final ActionCache cache     = new ActionCache();
+    //private final ActionCache cache     = new ActionCache();
     private final SimpleDriver fallback = new SimpleDriver();
 
     /* ---------- watchdog ---------- */
-    private static final long MAX_LATENCY_MS  = 15;
+    private static final long MAX_LATENCY_MS  = 17;
     private static final long LOG_INTERVAL_NS = 5_000_000_000L;   // 5 s
 
     private long totTime  = 0;      // somma dei ms totali
@@ -29,10 +29,10 @@ public class KNNDriver extends SimpleDriver {
 
     /* steering smoothing */
     private double prevSteer = 0;
-    private static final double ALPHA = 0.7;
+    private static final double ALPHA = 0.6;
 
     /* OOD guard - OutOfDistribution */
-    private static final double OOD_THRESHOLD = 0.25;
+    private static final double OOD_THRESHOLD = 0.95;
 
     /* feature set */
     private static final String[] FEATURES = DatasetBuilder.CONFIG_WITH_SENSORS;
@@ -55,25 +55,44 @@ public class KNNDriver extends SimpleDriver {
         double trackPos = s.getTrackPosition();
         double dmg      = s.getDamage();
 
-        boolean offTrack = (trackPos <= -1.0 || trackPos >= 1.0);
+        boolean offTrack = (trackPos <= -1.05 || trackPos >= 1.05);
         boolean hit      = (dmg > lastDamage + 0.5);    // soglia minima per rumore
-        boolean isStuck = s.getTrackEdgeSensors()[9] == -1.0;
+        double centralTrack = s.getTrackEdgeSensors()[9]; // centro pista
+        boolean isStuck = centralTrack == -1.0;
 
         if (offTrack || hit) {
             lastDamage = dmg;          // aggiorna stato prima di delegare
             System.err.printf("\n\n=========\n\n\n\n===========\n[WARN] off-track: %.2f, hit: %b, stuck: %b - fallback%n====\n",
                               trackPos, hit, isStuck);
+            prevSteer = 0;  // reset steering
             return fallback.control(s);
         }
 
         long t0 = System.nanoTime();             // START CHRONO
-        /* ---- K-NN oppure cache ---- */
         double[] in  = extractFeatures(s);
-        double[] actArr = cache.lookup(in);
+        /* ---- K-NN oppure cache ---- */
+        
+        //double[] actArr = cache.lookup(in);
+        double[] actArr = null;  // inizializza come null per KNN
 
-        if (actArr == null) {                    // cache miss → KNN
-            int k = dynamicK(s.getSpeed());
-            List<DataPoint> nn = tree.nearest(in, k);
+        int k = dynamicK(s.getSpeed());
+        List<DataPoint> nn = tree.nearest(in, k);
+        double nearest = euclidean(in, nn.get(0).features);
+        if (actArr == null) {        // cache miss → KNN
+            // Stampa tutti i vicini trovati per debug
+            if (nn.size() < k) {
+                System.err.printf("\n\n[WARN] %d vicini trovati, ma ne servono %d%n", nn.size(), k);
+            } else {
+                System.out.printf("\n\n[INFO] %d vicini trovati%n", nn.size());
+            }
+            
+            // Stampa il contenuto dei DataPoint dei vicini
+            for (int i = 0; i < nn.size(); i++) {
+                DataPoint dp = nn.get(i);
+                System.out.printf("Vicino %d - Features: %s, Action: [%.3f, %.3f, %.3f]%n", 
+                    i, Arrays.toString(dp.features), dp.action[0], dp.action[1], dp.action[2]);
+            }
+            System.out.printf("\n\n[INFO] KNN con k=%d%n\n\n\n\n\n", k);
 
             /* pesi inversi alla distanza */
             double[] w = new double[k];
@@ -90,16 +109,33 @@ public class KNNDriver extends SimpleDriver {
             for (int j = 0; j < 3; j++) actArr[j] /= wSum;
 
             /* OOD guard */
-            double nearest = euclidean(in, nn.get(0).features);
+            
             if (nearest > OOD_THRESHOLD) {
                 System.err.printf("\n\n====================\n[WARN] OOD %.3f > %.3f - fallback%n\n====\n",
                                   nearest, OOD_THRESHOLD);
+                prevSteer = 0;  // reset steering
+                lastDamage = dmg;  // aggiorna stato prima di delegare
                 return fallback.control(s);
             }
-            cache.put(in, actArr);
+            //cache.put(in, actArr);
         }
 
-        Action out = buildAction(actArr, s);
+        Action knnAction = buildAction(actArr, s);
+        Action safeAction = fallback.control(s);
+        double lambda = Math.max(0, 1 - nearest / OOD_THRESHOLD);
+        // fusione tra KNN e fallback
+        Action out = new Action();
+        out.steering   = lambda * knnAction.steering + (1 - lambda) * safeAction.steering;
+        // Aumenta il peso del KNN per l'accelerazione
+        double forceKnn = 0.2;  // forza del KNN sull'accelerazione
+        if (centralTrack > 100) forceKnn = 0.9;
+        double knnWeight = Math.min(1.0, lambda + forceKnn);
+        out.accelerate = knnWeight * knnAction.accelerate + (1 - knnWeight) * safeAction.accelerate;
+        out.brake      = knnWeight * knnAction.brake + (1 - knnWeight) * safeAction.brake;
+        out.gear       = gearChanger.chooseGear(s);  // cambio marcia sempre da fallback
+        /* --- debug --- */
+        System.out.printf("\nknnAction: %s, \nsafeAction: %s, lambda: %.2f%n",
+                          knnAction, safeAction, lambda);
 
         /* ---- TIMING & LOG ---- */
         long elapsedMs = (System.nanoTime() - t0) / 1_000_000;     // STOP
@@ -113,7 +149,7 @@ public class KNNDriver extends SimpleDriver {
         if (elapsedMs > MAX_LATENCY_MS) {
             System.err.printf("\n\n\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n**************\n[WARN] slow frame %d ms > %d - fallback%n",
                               elapsedMs, MAX_LATENCY_MS);
-            out = fallback.control(s);
+            out = safeAction;  // fallback
         }
 
         // log ogni 5 s
@@ -131,9 +167,10 @@ public class KNNDriver extends SimpleDriver {
     /* ---------- utility ---------- */
 
     private int dynamicK(double speed) {
-        if (speed < 30)  return 7;
-        if (speed > 120) return 7;
-        return 6;
+        if (speed < 30)  return 6;
+        if (speed < 70) return 6;
+        if (speed < 120) return 6;
+        return 7;
     }
 
     private Action buildAction(double[] a, SensorModel s) {
@@ -142,6 +179,8 @@ public class KNNDriver extends SimpleDriver {
         double steer = Math.max(-1, Math.min(1, a[0]));
         steer = ALPHA * steer + (1 - ALPHA) * prevSteer;
         prevSteer = steer;
+
+    
 
         out.steering   = steer;
         out.accelerate = Math.max(0, Math.min(1, a[1]));
@@ -192,7 +231,7 @@ public class KNNDriver extends SimpleDriver {
     /* ---------- lifecycle ---------- */
     @Override
     public void reset() {
-        cache.clear();
+        //cache.clear();
         prevSteer = 0;
         totTime = frames = maxDelay = 0;
         lastLog = System.nanoTime();
