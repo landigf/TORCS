@@ -1,250 +1,194 @@
 package scr.ai;
 
-import java.io.*;
-import java.util.*;
+import java.io.FileInputStream;
+import java.io.ObjectInputStream;
+import java.util.List;
+import java.util.Map;
 
 import scr.Action;
 import scr.SensorModel;
 import scr.SimpleDriver;
 
+/**
+ * KNN-based pilot che usa **KD-Tree segmentati**: per ciascun intervallo di
+ * distanceFromStart (normalizzato) viene caricato un albero diverso, così le
+ * query k-NN non vedono campioni di zone lontane della pista.
+ * <p>
+ * – Segmenti prodotti da {@code SegmentKDBuilder.java}
+ * – Numero di segmenti (SEGMENTS) deve combaciare fra builder e driver.
+ */
 public class KNNDriver extends SimpleDriver {
 
-    /* ---------- modelli, cache, fallback ---------- */
-    private final KDTree      tree;
-    //private final ActionCache cache     = new ActionCache();
+    /* ====== configurazione globale ====== */
+    private static final int SEGMENTS = 20;   // deve combaciare con il builder
+    private static final int MIN_K    = 4;
+    private static final int MAX_K    = 6;
+
+    /* watchdog / profilo */
+    private static final long MAX_LATENCY_MS  = 17;            // frame budget (ms)
+    private static final long LOG_INTERVAL_NS = 5_000_000_000L; // 5 s
+
+    /* ====== modelli & fallback ====== */
+    private final KDTree[] trees = new KDTree[SEGMENTS];
     private final SimpleDriver fallback = new SimpleDriver();
 
-    /* ---------- watchdog ---------- */
-    private static final long MAX_LATENCY_MS  = 17;
-    private static final long LOG_INTERVAL_NS = 5_000_000_000L;   // 5 s
-
-    private long totTime  = 0;      // somma dei ms totali
-    private long frames   = 0;      // cicli
-    private long maxDelay = 0;      // max ritardo nell’intervallo
-    private long lastLog  = System.nanoTime();
-
-    private SimpleGear gearChanger = new SimpleGear();
-
-
-    /* steering smoothing */
-    //private double prevSteer = 0;
-    //private static final double ALPHA = 0.2;
-
-    /* OOD guard - OutOfDistribution */
-    private static final double OOD_THRESHOLD = 0.6;
-
-    /* feature set */
+    /* ====== feature handling ====== */
     private static final String[] FEATURES = DatasetBuilder.CONFIG_WITH_SENSORS;
 
+    /** Pesi della distanza per feature – "default" vale per tutte le altre. */
     private static final Map<String, Double> FEAT_W = Map.of(
-        "distanceFromStart", 4.0,   // domina il matching
+        "distanceFromStart", 5.5,
         "angle",              1.5,
         "trackPos",           2.5,
-        /* tutto il resto */  "default", 1.0);
+        "default",            1.0);
 
-    boolean debug = false;  // flag per debug
+    /* OOD guard */
+    private static final double OOD_THRESHOLD = 1.0; // distanza massima accettabile
 
-    /* ---------- ctor ---------- */
+    /* stats */
+    private long totTime  = 0;
+    private long frames   = 0;
+    private long maxDelay = 0;
+    private long lastLog  = System.nanoTime();
+
+    private final SimpleGear gearChanger = new SimpleGear();
+
+    /* ====== ctor ====== */
     public KNNDriver() {
-        try (ObjectInputStream ois =
-                 new ObjectInputStream(new FileInputStream("knn.tree"))) {
-            tree = (KDTree) ois.readObject();
-            System.out.printf("KD-Tree caricato (%d feat)%n", FEATURES.length);
-        } catch (Exception e) {
-            throw new RuntimeException("Cannot load KD-Tree", e);
+        /* carica tutti i KD-Tree */
+        for (int i = 0; i < SEGMENTS; i++) {
+            String file = String.format("knn_seg_%02d.tree", i);
+            try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
+                trees[i] = (KDTree) ois.readObject();
+                System.out.printf("KD-Tree %02d caricato (%d punti)\n", i, trees[i].size());
+            } catch (Exception e) {
+                trees[i] = null; // segmento mancante: sarà gestito da selectTree()
+                System.err.printf("[WARN] KD-Tree %02d mancante: %s\n", i, e.getMessage());
+            }
         }
     }
 
-    /* ---------- loop ---------- */
+    /* ====== loop principale ====== */
     @Override
     public Action control(SensorModel s) {
-
+        /* ------ sicurezza & fallback rapido ------ */
         double trackPos = s.getTrackPosition();
-
         boolean offTrack = (trackPos <= -1.00 || trackPos >= 1.00);
-        double centralTrack = s.getTrackEdgeSensors()[9]; // centro pista
-        boolean isStuck = centralTrack == -1.0;
-
+        boolean isStuck  = s.getTrackEdgeSensors()[9] == -1.0;
         if (offTrack || s.getSpeed() == 0 || isStuck) {
-            System.err.printf("\n\n=========\n\n\n\n===========\n[WARN] off-track: %.2f, stuck: %b - fallback%n====\n",
-                              trackPos, isStuck);
-            //prevSteer = 0;  // reset steering
             return fallback.control(s);
         }
 
-        long t0 = System.nanoTime();             // START CHRONO
-        double[] in  = extractFeatures(s);
-        /* ---- K-NN oppure cache ---- */
-        
-        //double[] actArr = cache.lookup(in);
-        double[] actArr = null;  // inizializza come null per KNN
+        long t0 = System.nanoTime();
 
+        /* ------ estrai le feature normalizzate ------ */
+        double[] in = extractFeatures(s);
+
+        /* ------ scegli l'albero in base a distanceFromStart ------ */
+        double rawDist  = s.getDistanceFromStartLine();
+        double normDist = FeatureScaler.normalize("distanceFromStart", rawDist);
+        int seg         = (int) Math.floor(normDist * SEGMENTS) % SEGMENTS;
+        KDTree tree     = selectTree(seg);
+        if (tree == null) return fallback.control(s);
+
+        /* ------ k dinamico ------ */
         int k = dynamicK(s);
         List<DataPoint> nn = tree.nearest(in, k);
+
+        /* ------ Out-of-Distribution guard ------ */
         double nearest = weightedDist(in, nn.get(0).features);
         if (nearest > OOD_THRESHOLD) {
-            System.err.printf("\n\n====================\n[WARN] OOD %.3f > %.3f - fallback%n\n====\n",
-                                nearest, OOD_THRESHOLD);
-            //prevSteer = 0;  // reset steering
+            System.err.printf("==============================\n\n\n\n===================================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
             return fallback.control(s);
         }
 
-        if (actArr == null) {        // cache miss → KNN
-            // Stampa tutti i vicini trovati per debug
-            if (nn.size() < k) {
-                System.err.printf("\n\n[WARN] %d vicini trovati, ma ne servono %d%n", nn.size(), k);
-                return fallback.control(s);
-            } else {
-                System.out.printf("\n\n[INFO] %d vicini trovati%n", nn.size());
-            }
-            
-            // Stampa il contenuto dei DataPoint dei vicini
-            for (int i = 0; i < nn.size(); i++) {
-                DataPoint dp = nn.get(i);
-                System.out.printf("Vicino %d - Features: %s, Action: [%.3f, %.3f, %.3f]%n", 
-                    i, Arrays.toString(dp.features), dp.action[0], dp.action[1], dp.action[2]);
-            }
-            System.out.printf("\n\n[INFO] KNN con k=%d%n\n\n\n\n\n", k);
+        /* ------ media delle azioni ------ */
+        double[] actArr = averageAction(nn);
 
-            /* pesi uguali per tutti i vicini */
-            actArr = new double[3];
-            for (int i = 0; i < k; i++) {
-                for (int j = 0; j < 3; j++) {
-                    actArr[j] += nn.get(i).action[j];
-                }
-            }
-            for (int j = 0; j < 3; j++) {
-                actArr[j] /= k;
-            }
-
-            /* OOD guard */
-            
-            
-            //cache.put(in, actArr);
-        }
-
-        Action knnAction = buildAction(actArr, s);
+        /* ------ costruisci e restituisci l'azione ------ */
+        Action knnAction  = buildAction(actArr, s);
         Action safeAction = fallback.control(s);
-        // double lambda = Math.max(0, 1 - nearest / OOD_THRESHOLD);
-        // lambda = 1; // DEBUG: forza lambda a 1 per test
 
-        // // fusione tra KNN e fallback
-        // Action out = new Action();
-        // out.steering   = lambda * knnAction.steering + (1 - lambda) * safeAction.steering;
-        // // Aumenta il peso del KNN per l'accelerazione
-        // double forceKnn = 0.2;  // forza del KNN sull'accelerazione
-        // if (centralTrack > 100 || s.getSpeed() > 40) forceKnn = 0.9;
-        // double knnWeight = Math.min(1.0, lambda + forceKnn);
-        // out.accelerate = knnWeight * knnAction.accelerate + (1 - knnWeight) * safeAction.accelerate;
-        // out.brake      = knnWeight * knnAction.brake + (1 - knnWeight) * safeAction.brake;
-        /* --- debug --- */
-        //System.out.printf("\nknnAction: %s, \nsafeAction: %s, lambda: %.2f%n",knnAction, safeAction, lambda);
-        Action out = knnAction;  // usa solo KNN per ora
-        /* ---- TIMING & LOG ---- */
-        long elapsedMs = (System.nanoTime() - t0) / 1_000_000;     // STOP
+        Action out = knnAction;          // per ora usiamo solo il KNN puro
 
-        // stats
-        totTime  += elapsedMs;
+        /* ------ profiling temporale ------ */
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
+        totTime += elapsedMs;
         frames++;
         if (elapsedMs > maxDelay) maxDelay = elapsedMs;
+        if (elapsedMs > MAX_LATENCY_MS) out = safeAction;  // frame troppo lento → fallback
 
-        // fallback su frame lenti
-        if (elapsedMs > MAX_LATENCY_MS) {
-            System.err.printf("\n\n\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n**************\n[WARN] slow frame %d ms > %d - fallback%n",
-                              elapsedMs, MAX_LATENCY_MS);
-            out = safeAction;  // fallback
-        }
-
-        // log ogni 5 s
         long now = System.nanoTime();
         if (now - lastLog >= LOG_INTERVAL_NS) {
             double avg = (double) totTime / frames;
-            System.out.printf("\n***[INFO] avg %.2f ms   max %d ms%n\n\n\n\n\n\n\n", avg, maxDelay);
+            System.out.printf("[INFO] avg %.2f ms   max %d ms\n", avg, maxDelay);
             lastLog = now;
-            maxDelay = 0;                        // reset per prossimo intervallo
+            maxDelay = 0;
         }
-        // // Correzione steering aggressiva per evitare di uscire dalla pista
-        // double absTrackPos = Math.abs(trackPos);
-        
-        // if (absTrackPos > 0.8) {
-        //     // Situazione critica: forza steering verso il centro
-        //     double correctionStrength = (absTrackPos - 0.8) / 0.2; // 0-1 quando trackPos è 0.8-1.0
-        //     correctionStrength = Math.min(1.0, correctionStrength);
-            
-        //     if (trackPos > 0) {
-        //     // Troppo a sinistra, forza steering a destra
-        //     out.steering = -correctionStrength;
-        //     } else {
-        //     // Troppo a destra, forza steering a sinistra
-        //     out.steering = correctionStrength;
-        //     }
-        // } else if (absTrackPos > 0.5) {
-        //     // Situazione di avvertimento: modifica gradualmente lo steering
-        //     double warningStrength = (absTrackPos - 0.5) / 0.3; // 0-1 quando trackPos è 0.5-0.8
-            
-        //     if (trackPos > 0 && out.steering > 0) {
-        //     // A sinistra del centro e steering verso sinistra: riduci o inverti
-        //     out.steering = out.steering * (1 - warningStrength) - warningStrength * 0.5;
-        //     } else if (trackPos < 0 && out.steering < 0) {
-        //     // A destra del centro e steering verso destra: riduci o inverti  
-        //     out.steering = out.steering * (1 - warningStrength) + warningStrength * 0.5;
-        //     }
-        // }
-        
-        // Clamp finale per sicurezza
+
+        /* clamp steering finale */
         out.steering = Math.max(-1.0, Math.min(1.0, out.steering));
-        System.out.printf("--------Steering: %.3f, Accel: %.3f, Brake: %.3f, Gear: %d%n",
-                          out.steering, out.accelerate, out.brake, out.gear);
-
-
-        if (frames % 2 == 0) {
-            out.steering = 0;  // reset steering
-        }
-
         return out;
     }
 
-    /* ---------- utility ---------- */
+    /* ====== helper ====== */
+    /** Restituisce l'albero del segmento richiesto; se assente, prova quelli adiacenti. */
+    private KDTree selectTree(int seg) {
+        if (trees[seg] != null) return trees[seg];
+        for (int d = 1; d < SEGMENTS; d++) {
+            int left  = (seg - d + SEGMENTS) % SEGMENTS;
+            if (trees[left] != null) return trees[left];
+            int right = (seg + d) % SEGMENTS;
+            if (trees[right] != null) return trees[right];
+        }
+        return null; // nessun albero caricato (caso limite)
+    }
 
+    /** k variabile in funzione dell'angolo alla tangente della pista. */
     private int dynamicK(SensorModel s) {
         double absA = Math.abs(s.getAngleToTrackAxis());
-        if (absA > 0.3) return 5;  // curva stretta
-        if (absA > 0.1) return 6;  // curva media
-        return 7;  // rettilineo o curva larga
+        if (absA > 0.3) return MIN_K;     // curva stretta
+        if (absA > 0.1) return MIN_K + 1; // curva media
+        return MAX_K;                     // rettilineo / curva larga
+    }
+
+    /** Media le (steering, accel, brake) dei vicini. */
+    private static double[] averageAction(List<DataPoint> pts) {
+        int dim = pts.get(0).action.length;
+        double[] out = new double[dim];
+        for (DataPoint p : pts) {
+            for (int i = 0; i < dim; i++) out[i] += p.action[i];
+        }
+        for (int i = 0; i < dim; i++) out[i] /= pts.size();
+        return out;
     }
 
     private Action buildAction(double[] a, SensorModel s) {
         Action out = new Action();
-
-        double steer = Math.max(-1, Math.min(1, a[0]));
-        //steer = ALPHA * steer + (1 - ALPHA) * prevSteer;
-        //prevSteer = steer;
-
-    
-        System.out.printf("\nIN BUILD: --- Steering: %.3f, Accel: %.3f, Brake: %.3f%n", steer, a[1], a[2]);
-        out.steering   = steer;
+        out.steering   = Math.max(-1, Math.min(1, a[0]));
         out.accelerate = Math.max(0, Math.min(1, a[1]));
         out.brake      = Math.max(0, Math.min(1, a[2]));
         out.gear       = gearChanger.chooseGear(s);
         return out;
     }
 
+    /** Converte i SensorModel nel vettore di feature normalizzate. */
     private double[] extractFeatures(SensorModel s) {
         double[] f = new double[FEATURES.length];
         for (int i = 0; i < FEATURES.length; i++) {
             String col = FEATURES[i];
             double raw;
             switch (col) {
-                case "angle"       -> raw = s.getAngleToTrackAxis();
-                case "curLapTime"  -> raw = s.getCurrentLapTime();
-                case "distanceFromStart" -> raw = s.getDistanceFromStartLine();
-                case "speedX"      -> raw = s.getSpeed();
-                case "speedY"      -> raw = s.getLateralSpeed();
-                case "trackPos"    -> raw = s.getTrackPosition();
-                case "gear"        -> raw = s.getGear();
-                case "rpm"         -> raw = s.getRPM();
-                case "damage"      -> raw = s.getDamage();
-                case "lastLapTime" -> raw = s.getLastLapTime();
+                case "angle"               -> raw = s.getAngleToTrackAxis();
+                case "curLapTime"          -> raw = s.getCurrentLapTime();
+                case "distanceFromStart"   -> raw = s.getDistanceFromStartLine();
+                case "speedX"              -> raw = s.getSpeed();
+                case "speedY"              -> raw = s.getLateralSpeed();
+                case "trackPos"            -> raw = s.getTrackPosition();
+                case "gear"                -> raw = s.getGear();
+                case "rpm"                 -> raw = s.getRPM();
+                case "damage"              -> raw = s.getDamage();
+                case "lastLapTime"         -> raw = s.getLastLapTime();
                 default -> {
                     if (col.startsWith("track")) {
                         int idx = Integer.parseInt(col.substring(5));
@@ -260,40 +204,25 @@ public class KNNDriver extends SimpleDriver {
         return f;
     }
 
-    // private static double euclidean(double[] a, double[] b) {
-    //     double sum = 0;
-    //     for (int i = 0; i < a.length; i++) {
-    //         double d = a[i] - b[i];
-    //         sum += d * d;
-    //     }
-    //     return Math.sqrt(sum);
-    // }
-
-    /* distanza pesata + wrap-around sulla linea di partenza */
+    /* distanza pesata (wrap-around su distanceFromStart) */
     private static double weightedDist(double[] a, double[] b) {
         double sum = 0;
         for (int i = 0; i < a.length; i++) {
-            String col  = FEATURES[i];
-            double w    = FEAT_W.getOrDefault(col, FEAT_W.get("default"));
+            String col = FEATURES[i];
+            double w   = FEAT_W.getOrDefault(col, FEAT_W.get("default"));
             double diff = a[i] - b[i];
-
-            /* correzione ciclica SOLO per distanceFromStart (range normalizzato 0-1) */
             if ("distanceFromStart".equals(col))
                 diff = Math.min(Math.abs(diff), 1.0 - Math.abs(diff));
-
             sum += w * diff * diff;
         }
         return Math.sqrt(sum);
     }
 
-    /* ---------- lifecycle ---------- */
+    /* ====== lifecycle ====== */
     @Override
     public void reset() {
-        //cache.clear();
-        //prevSteer = 0;
         totTime = frames = maxDelay = 0;
         lastLog = System.nanoTime();
     }
-
     @Override public void shutdown() {}
 }

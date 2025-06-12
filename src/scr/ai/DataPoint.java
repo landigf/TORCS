@@ -11,4 +11,5 @@ public class DataPoint implements Serializable {
         this.features = features;
         this.action   = action;
     }
+
 }

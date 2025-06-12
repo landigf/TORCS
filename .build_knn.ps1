@@ -1,88 +1,61 @@
+<#
+    Build-KNN.ps1
+    -----------------------------
+    • Compila le classi Java essenziali (KD‑Tree, scaler, builder, driver)
+    • Genera i KD‑Tree segmentati con SegmentKDBuilder (nessun scr.jar richiesto)
+#>
+
 param(
-    [Parameter(Mandatory=$false)]
-    [ValidateSet("basic", "sensors", "all")]
-    [string]$Config = "basic",
-    
-    [Parameter(Mandatory=$false)]
+    [ValidateSet("basic","sensors","all")]
+    [string]$Config      = "sensors",                 # default feature set
+
     [string]$DatasetPath = "classes/dataset_union.csv",
-    
-    [Parameter(Mandatory=$false)]
-    [string]$ModelName = "knn.tree"
+    [int]   $Segments    = 20                          # KD‑Tree da creare
 )
 
-Write-Host "=== BUILD KNN MODEL ===" -ForegroundColor Green
-Write-Host "Configurazione: $Config" -ForegroundColor Yellow
-Write-Host "Dataset: $DatasetPath" -ForegroundColor Yellow  
-Write-Host "Modello output: $ModelName" -ForegroundColor Yellow
+Write-Host "`n=== BUILD KNN SEGMENTED MODEL ===" -ForegroundColor Green
+Write-Host "Configurazione feature: $Config" -ForegroundColor Yellow
+Write-Host "Dataset           : $DatasetPath" -ForegroundColor Yellow
+Write-Host "Segmenti          : $Segments" -ForegroundColor Yellow
+Write-Host "(nessun scr.jar necessario)" -ForegroundColor Yellow
 Write-Host ""
 
-# Step 2: Compilazione classi KD-Tree
-Write-Host "Step 2: Compilazione KD-Tree..." -ForegroundColor Cyan
-javac -d classes src/scr/ai/DataPoint.java src/scr/ai/FeatureScaler.java src/scr/ai/KDTree.java src/scr/ai/DatasetBuilder.java
-
+# ─── STEP 1: Compilazione classi core ────────────────────────────────
+Write-Host "Step 1: Compilazione classi core..." -ForegroundColor Cyan
+javac -d classes `
+      src/scr/ai/DataPoint.java `
+      src/scr/ai/FeatureScaler.java `
+      src/scr/ai/KDTree.java `
+      src/scr/ai/DatasetBuilder.java `
+      src/scr/ai/SegmentKDBuilder.java
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERRORE: Compilazione fallita!" -ForegroundColor Red
-    exit 1
+    Write-Host "ERRORE: compilazione core fallita" -ForegroundColor Red; exit 1
 }
 
-# Creazione del modello serializzato
-Write-Host "Creazione modello KD-Tree..." -ForegroundColor Cyan
+# ─── STEP 2: Genera KD‑Tree segmentati ───────────────────────────────
+Write-Host "Step 2: Creazione KD‑Tree segmentati..." -ForegroundColor Cyan
 Push-Location classes
 try {
-    java -cp . scr.ai.DatasetBuilder ../$DatasetPath $ModelName $Config
-    $buildResult = $LASTEXITCODE
-} finally {
-    Pop-Location
-}
+    java scr.ai.SegmentKDBuilder "../$DatasetPath" $Segments
+    $ret = $LASTEXITCODE
+} finally { Pop-Location }
+if ($ret -ne 0) { Write-Host "ERRORE: builder fallito" -ForegroundColor Red; exit 1 }
 
-if ($buildResult -ne 0) {
-    Write-Host "ERRORE: Creazione modello fallita!" -ForegroundColor Red
-    exit 1
-}
-
-# Step 3: Compilazione driver K-NN  
-Write-Host "Step 3: Compilazione driver K-NN..." -ForegroundColor Cyan
-javac -d classes -cp classes src/scr/ai/ActionCache.java src/scr/ai/KNNDriver.java
-
+# ─── STEP 3: Compilazione driver ─────────────────────────────────────
+Write-Host "Step 3: Compilazione KNNDriver..." -ForegroundColor Cyan
+javac -d classes -cp classes `
+      src/scr/ai/KNNDriver.java `
+      src/scr/ai/SimpleGear.java `
+      src/scr/ai/ActionCache.java 2>$null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERRORE: Compilazione driver fallita!" -ForegroundColor Red
-    exit 1
+    Write-Host "ERRORE: driver fallito (ignora se manca ActionCache)" -ForegroundColor Red; exit 1
 }
 
-# Aggiorna automaticamente la configurazione nel KNNDriver
-Write-Host "Aggiornamento configurazione nel KNNDriver..." -ForegroundColor Cyan
-$knnDriverPath = "src/scr/ai/KNNDriver.java"
-$content = Get-Content $knnDriverPath -Raw
-
-# Trova e sostituisci la riga di configurazione
-$configLine = switch ($Config) {
-    "basic"   { "    private String[] featureConfig = DatasetBuilder.CONFIG_BASIC;" }
-    "sensors" { "    private String[] featureConfig = DatasetBuilder.CONFIG_WITH_SENSORS;" }
-    "all"     { "    private String[] featureConfig = DatasetBuilder.CONFIG_ALL_SENSORS;" }
-}
-
-$pattern = '    private String\[\] featureConfig = DatasetBuilder\.CONFIG_[A-Z_]+;'
-$newContent = $content -replace $pattern, $configLine
-
-if ($content -ne $newContent) {
-    Set-Content $knnDriverPath -Value $newContent -NoNewline
-    Write-Host "Configurazione aggiornata in KNNDriver.java" -ForegroundColor Green
-    
-    # Ricompila con la nuova configurazione
-    Write-Host "Ricompilazione con nuova configurazione..." -ForegroundColor Cyan
-    javac -d classes -cp classes src/scr/ai/ActionCache.java src/scr/ai/KNNDriver.java
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERRORE: Ricompilazione fallita!" -ForegroundColor Red
-        exit 1
-    }
-}
-
-Write-Host ""
-Write-Host "=== BUILD COMPLETATO ===" -ForegroundColor Green
-Write-Host "Modello: classes/$ModelName" -ForegroundColor Yellow
-Write-Host "Configurazione: $Config" -ForegroundColor Yellow
+# ─── Output finale ───────────────────────────────────────────────────
+Write-Host "`n=== BUILD COMPLETATO ===" -ForegroundColor Green
+Write-Host ("Generati: knn_seg_00.tree … knn_seg_{0:D2}.tree" -f ($Segments-1)) -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Per testare il driver:" -ForegroundColor Cyan
-Write-Host "cd classes" -ForegroundColor White
-Write-Host "java -cp . scr.Client scr.ai.KNNDriver localhost:3001 verbose:on" -ForegroundColor White
+Write-Host -ForegroundColor White "  cd classes"
+Write-Host -ForegroundColor White "  java -cp . scr.Client scr.ai.KNNDriver localhost:3001 verbose:on"
+Write-Host ""
