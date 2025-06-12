@@ -65,7 +65,7 @@ public class SegmentKDBuilder {
             try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(filename))) {
                 oos.writeObject(tree);
             }
-            System.out.printf("Segment %02d -> %d points -> %s%n", seg, buckets[seg].size(), filename);
+            System.out.printf("Segment %02d → %d points → %s%n", seg, buckets[seg].size(), filename);
         }
 
         System.out.println("Done.");

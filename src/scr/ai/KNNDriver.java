@@ -20,8 +20,8 @@ import scr.SimpleDriver;
 public class KNNDriver extends SimpleDriver {
 
     /* ====== configurazione globale ====== */
-    private static final int SEGMENTS = 20;   // deve combaciare con il builder
-    private static final int MIN_K    = 4;
+    private static final int SEGMENTS = 35;   // deve combaciare con il builder
+    private static final int MIN_K    = 3;
     private static final int MAX_K    = 6;
 
     /* watchdog / profilo */
@@ -37,13 +37,13 @@ public class KNNDriver extends SimpleDriver {
 
     /** Pesi della distanza per feature – "default" vale per tutte le altre. */
     private static final Map<String, Double> FEAT_W = Map.of(
-        "distanceFromStart", 5.5,
-        "angle",              1.5,
+        "distanceFromStart", 5.0,
+        "angle",              2.0,
         "trackPos",           2.5,
         "default",            1.0);
 
     /* OOD guard */
-    private static final double OOD_THRESHOLD = 1.0; // distanza massima accettabile
+    private static final double OOD_THRESHOLD = 0.5;
 
     /* stats */
     private long totTime  = 0;
