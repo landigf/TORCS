@@ -29,10 +29,7 @@ for csv_file in csv_files:
     df_clean = df.iloc[first_nonzero_accel:]
     
     # Remove rows where any track* column has value -1.0
-    track_cols = [col for col in df_clean.columns if col.startswith('track') and col != 'trackPos']
-    if track_cols:
-        mask = (df_clean[track_cols] != -1.0).all(axis=1)
-        df_clean = df_clean[mask]
+    
     
     # Remove rows where lastLapTime == x
     #if 'lastLapTime' in df_clean.columns:

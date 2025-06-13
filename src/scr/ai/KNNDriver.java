@@ -22,10 +22,9 @@ public class KNNDriver extends SimpleDriver {
     /* ====== configurazione globale ====== */
     private static final int SEGMENTS = 35;   // deve combaciare con il builder
     private static final int MIN_K    = 3;
-    private static final int MAX_K    = 6;
+    private static final int MAX_K    = 5;
 
     /* watchdog / profilo */
-    private static final long MAX_LATENCY_MS  = 17;            // frame budget (ms)
     private static final long LOG_INTERVAL_NS = 5_000_000_000L; // 5 s
 
     /* ====== modelli & fallback ====== */
@@ -72,33 +71,51 @@ public class KNNDriver extends SimpleDriver {
     @Override
     public Action control(SensorModel s) {
         /* ------ sicurezza & fallback rapido ------ */
+        double rawDist  = s.getDistanceFromStartLine();
+        double normDist = FeatureScaler.normalize("distanceFromStart", rawDist);
+        int seg         = (int) Math.floor(normDist * SEGMENTS) % SEGMENTS;
         double trackPos = s.getTrackPosition();
         boolean offTrack = (trackPos <= -1.00 || trackPos >= 1.00);
         boolean isStuck  = s.getTrackEdgeSensors()[9] == -1.0;
-        if (offTrack || s.getSpeed() == 0 || isStuck) {
+        if (offTrack || s.getSpeed() < 7 || isStuck) {
+            System.err.printf("\n---------->[WARN] Off-track: %.2f, Speed: %.2f, Stuck: %b%n", trackPos, s.getSpeed(), isStuck);
             return fallback.control(s);
         }
-
+        boolean isStraight = Math.abs(s.getAngleToTrackAxis()) < 0.1;
         long t0 = System.nanoTime();
 
         /* ------ estrai le feature normalizzate ------ */
         double[] in = extractFeatures(s);
 
         /* ------ scegli l'albero in base a distanceFromStart ------ */
-        double rawDist  = s.getDistanceFromStartLine();
-        double normDist = FeatureScaler.normalize("distanceFromStart", rawDist);
-        int seg         = (int) Math.floor(normDist * SEGMENTS) % SEGMENTS;
+        
+        
         KDTree tree     = selectTree(seg);
         if (tree == null) return fallback.control(s);
+        System.out.printf("[INFO] Segmento %02d, distanza normalizzata=%.3f%n", seg, normDist);
 
         /* ------ k dinamico ------ */
         int k = dynamicK(s);
+        System.out.printf("[INFO] k=%d (dynamic based on angle %.2f)\n", k, s.getAngleToTrackAxis());
+        if (seg == 29) {
+            System.out.printf("[INFO] Segmento 29: k=%d (curva media)\n", MIN_K);
+            k = 2;
+        } else if (seg == 13 || seg == 14 || seg == 15 || seg == 16 || seg == 17) {
+            System.out.printf("[INFO] Segmento : k=%d (curva stretta)\n", MIN_K + 1);
+            k = 4;
+        } else if (seg == 22 || seg == 23) {
+            System.out.printf("[INFO] Segmento 22-23: k=%d (S)\n", MAX_K);
+            k = 3;
+        }
         List<DataPoint> nn = tree.nearest(in, k);
 
         /* ------ Out-of-Distribution guard ------ */
         double nearest = weightedDist(in, nn.get(0).features);
-        if (nearest > OOD_THRESHOLD) {
-            System.err.printf("==============================\n\n\n\n===================================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
+        if (nearest > OOD_THRESHOLD && !isStraight && seg <= 31) {
+            System.err.printf("\n==============================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
+            return fallback.control(s);
+        } if (seg == 22 || seg == 23 && nearest > 0.26) {
+            System.err.printf("\n=================->->==========\n[WARN] Segmento 22-23: OOD guard attivata, ma proseguo.\n");
             return fallback.control(s);
         }
 
@@ -107,7 +124,6 @@ public class KNNDriver extends SimpleDriver {
 
         /* ------ costruisci e restituisci l'azione ------ */
         Action knnAction  = buildAction(actArr, s);
-        Action safeAction = fallback.control(s);
 
         Action out = knnAction;          // per ora usiamo solo il KNN puro
 
@@ -116,7 +132,6 @@ public class KNNDriver extends SimpleDriver {
         totTime += elapsedMs;
         frames++;
         if (elapsedMs > maxDelay) maxDelay = elapsedMs;
-        if (elapsedMs > MAX_LATENCY_MS) out = safeAction;  // frame troppo lento → fallback
 
         long now = System.nanoTime();
         if (now - lastLog >= LOG_INTERVAL_NS) {
@@ -128,6 +143,10 @@ public class KNNDriver extends SimpleDriver {
 
         /* clamp steering finale */
         out.steering = Math.max(-1.0, Math.min(1.0, out.steering));
+        if (seg == 26 || seg == 27 || seg == 28) {
+            out.steering = 0;
+            out.brake = 0;
+        }
         return out;
     }
 
