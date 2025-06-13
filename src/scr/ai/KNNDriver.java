@@ -27,8 +27,8 @@ public class KNNDriver extends SimpleDriver {
 
     /* ====== configurazione globale ====== */
     private static final int SEGMENTS = 32;   // deve combaciare con il builder
-    private static final int MIN_K    = 3;
-    private static final int MAX_K    = 6;
+    private static final int MIN_K    = 5;
+    private static final int MAX_K    = 7;
 
     /* watchdog / profilo */
     //private static final long LOG_INTERVAL_NS = 5_000_000_000L; // 5 s
@@ -41,14 +41,17 @@ public class KNNDriver extends SimpleDriver {
     private static final String[] FEATURES = DatasetBuilder.CONFIG_WITH_SENSORS;
 
     /** Pesi della distanza per feature – "default" vale per tutte le altre. */
+    static double wDFS = 1.2; // peso per distanceFromStart
+    static double wAngle = 1.2; // peso per angle
+    static double wSpeedX = 1.0; // peso per speedX
     private static final Map<String, Double> FEAT_W = Map.of(
-        "distanceFromStart", 0.0,
-        "angle",              3.0,
-        "trackPos",        1.0,
+        "distanceFromStart",  wDFS,
+        "angle",              wAngle,
+        "speedX",             wSpeedX,
         "default",            1.0);
 
     /* OOD guard */
-    private static final double OOD_THRESHOLD = 2.0;
+    private static final double OOD_THRESHOLD = 3.0;
 
     /* stats */
     // private long totTime  = 0;
@@ -77,7 +80,7 @@ public class KNNDriver extends SimpleDriver {
 
         try {
             File f = new File("drive_log.csv");
-            log = new PrintWriter(new FileWriter(f, true), true);
+            log = new PrintWriter(new FileWriter(f, false), true);
             if (f.length() == 0) {
                 String header = "time,angle,curLapTime,distanceFromStart,fuel,damage,gear,rpm," +
                                 "speedX,speedY,speedZ,lastLapTime," +
@@ -100,12 +103,18 @@ public class KNNDriver extends SimpleDriver {
         double normDist = FeatureScaler.normalize("distanceFromStart", rawDist);
         int seg         = (int) Math.floor(normDist * SEGMENTS) % SEGMENTS;
         System.out.printf("\n^^^[INFO] distanceFromStart=%.3f, segment=%02d%n", rawDist, seg);
-        //double trackPos = s.getTrackPosition();
-        //boolean offTrack = (trackPos <= -1.00 || trackPos >= 1.00);
+        double trackPos = s.getTrackPosition();
+        boolean offTrack = (trackPos <= -1.2 || trackPos >= 1.2);
         //boolean isStuck  = s.getTrackEdgeSensors()[9] == -1.0;
         
         /* ====== logging ====== */
         Action fallbackAction = fallback.control(s);
+        if (offTrack || s.getSpeed() <= 7 && seg != 0 && seg != SEGMENTS - 1 /*    */) {
+            System.err.printf("[WARN] sing fallback action%n", s.getSpeed());
+            writeLog(s, fallbackAction);
+            return fallbackAction;
+        }
+
         // if (offTrack || s.getSpeed() <= 7 || isStuck) {
         //     System.err.printf("\n---------->[WARN] Off-track: %.2f, Speed: %.2f, Stuck: %b%n", trackPos, s.getSpeed(), isStuck);
         //     //return fallback.control(s);
@@ -130,14 +139,34 @@ public class KNNDriver extends SimpleDriver {
 
         /* ------ k dinamico ------ */
         int k = dynamicK(s);
+        boolean isInS = seg == 20 || seg == 21 || seg == 22;
+        boolean isInFine = seg == 27 || seg == 28 || seg == 26;
+        if (isInS) k = 6;
+        else if (isInFine) k = 5;
+        // if (isInS) {
+        //     k = MIN_K+1; // segmenti critici: usa sempre k minimo
+        // } else if (seg == 11 || seg == 9 || seg == 10){
+        //     k = MAX_K - 1;
+        // }
         System.out.printf("[INFO] k=%d (dynamic based on angle %.2f)\n", k, s.getAngleToTrackAxis());
 
+        if (seg == 13) {
+            wDFS = 3;
+            wAngle = 3;
+            k = 7;
+        } else if (seg == 14) {
+            wAngle = 3;
+            k = 6;
+        } else {
+            wDFS = 1.2; // reset to default
+            wAngle = 1.2;
+        }
         List<DataPoint> nn = tree.nearest(in, k);
 
         //boolean isStraight = Math.abs(s.getAngleToTrackAxis()) < 0.1;
         /* ------ Out-of-Distribution guard ------ */
         double nearest = weightedDist(in, nn.get(0).features);
-        if (nearest > OOD_THRESHOLD) {
+        if (nearest > OOD_THRESHOLD /*&& seg != 9 && seg != 10 && seg != 23 && seg != 20*/) {
             System.err.printf("\n==============================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
             //return fallback.control(s);
             writeLog(s, fallbackAction);
@@ -150,22 +179,45 @@ public class KNNDriver extends SimpleDriver {
         /* ------ costruisci e restituisci l'azione ------ */
         Action knnAction  = buildAction(actArr, s);
 
-        Action out = knnAction;          // per ora usiamo solo il KNN puro
+        // Blending logic: mix KNN with fallback when OOD is high or in segment 23
+        
+        Action out = knnAction; // default to KNN action
+        
+        
+        if (isInS) {
+            // Bilanciamento 50-50 tra KNN e fallback nei segmenti critici
+            double blendRatio = 0.4;
+            out.steering = blendRatio * knnAction.steering + (1 - blendRatio) * fallbackAction.steering;
+            out.accelerate = blendRatio * knnAction.accelerate + (1 - blendRatio) * fallbackAction.accelerate; // favorisce accelerazione
+            out.brake = blendRatio * knnAction.brake + (1 - blendRatio) * fallbackAction.brake;
+        }
 
-        /* ------ profiling temporale ------ */
-
-        // long now = System.nanoTime();
-        // if (now - lastLog >= LOG_INTERVAL_NS) {
-        //     double avg = (double) totTime / frames;
-        //     System.out.printf("[INFO] avg %.2f ms   max %d ms\n", avg, maxDelay);
-        //     lastLog = now;
-        //     maxDelay = 0;
-        // }
 
         /* clamp steering finale */
-        out.steering = Math.max(-1.0, Math.min(1.0, out.steering));
+        if (isInS) {
+            out.steering = Math.max(-0.6, Math.min(0.6, out.steering));
+        } else if (seg == 13 || seg == 14 || seg == 15 || isInFine)
+            if (trackPos < -0.8) {
+                // Vicino al bordo sinistro: non limitare steering positivi
+                out.steering = Math.max(-0.1, Math.min(0.6, out.steering));
+            } else if (trackPos > 0.8) {
+                // Vicino al bordo destro: non limitare steering negativi
+                out.steering = Math.max(-0.6, Math.min(0.1, out.steering));
+            } else {
+                // Normale limitazione quando non si è vicini ai bordi
+                out.steering = Math.max(-0.3, Math.min(0.3, out.steering));
+            }
+        else {
+            out.steering = Math.max(-0.17, Math.min(0.17, out.steering));  
+        }
 
+        //if (seg >= 27) out.steering = Math.max(-0.3, out.steering); // limit steering in segment 28+
+        //if (seg >= 28) out.steering = Math.max(-0.1, out.steering); // limit steering in segment 29+
         /* ====== logging ====== */
+        //if (seg == 20) out.steering = Math.max(-0.01, Math.min(0.01, out.steering));
+        //if (seg >= 29) out.steering = Math.max(-0.01, Math.min(0.01, out.steering));
+        if (trackPos < -1.1 && out.steering < 0) out.steering = 0.17; // limit steering on left edge
+        if (trackPos > 1.1 && out.steering > 0) out.steering = -0.17; // limit steering on right edge
         writeLog(s, knnAction);
         return out;
     }

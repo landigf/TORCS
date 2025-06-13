@@ -5,7 +5,7 @@ import os
 input_dir = "classes"  # Adjust this path as needed
 
 # Match both drive_log.csv and drive_log%.csv
-csv_files = glob.glob(os.path.join(input_dir, 'knnDrive*.csv'))
+csv_files = glob.glob(os.path.join(input_dir, 'drive*_clean.csv'))
 
 # Remove duplicates in case drive_log.csv is matched twice
 csv_files = list(set(csv_files))
@@ -30,9 +30,9 @@ for csv_file in csv_files:
     
     # Remove rows where any track* column has value -1.0
     
-    # Remove rows where distanceFromStart >= 1900
+    # Remove rows where distanceFromStart < 3569
     if 'distanceFromStart' in df_clean.columns:
-        df_clean = df_clean[df_clean['distanceFromStart'] >= 1800]
+        df_clean = df_clean[df_clean['distanceFromStart'] >= 3569]
     
     # Remove rows where lastLapTime == x
     #if 'lastLapTime' in df_clean.columns:
