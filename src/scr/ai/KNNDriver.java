@@ -111,7 +111,7 @@ public class KNNDriver extends SimpleDriver {
 
         /* ------ Out-of-Distribution guard ------ */
         double nearest = weightedDist(in, nn.get(0).features);
-        if (nearest > OOD_THRESHOLD && !isStraight && seg <= 31) {
+        if (nearest > OOD_THRESHOLD && !isStraight && seg <= 30) {
             System.err.printf("\n==============================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
             return fallback.control(s);
         } if (seg == 22 || seg == 23 && nearest > 0.26) {

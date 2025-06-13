@@ -3,14 +3,14 @@ package scr;
 import java.io.Serializable;
 
 /**
- * SimpleDriver - versione 2025‑06‑11 con cambio marcia evoluto.
+ * SimpleDriver - versione 2025-06-11 con cambio marcia evoluto.
  * <p>
  * Integriamo l’algoritmo di shifting suggerito dall’utente:
- * ‑ isteresi ampia su RPM
- * ‑ frenata automatica/up‑shift ritardato, down‑shift anticipato in curva
- * ‑ dead‑time di 0,25 s per evitare rimbalzi di marcia
+ * - isteresi ampia su RPM
+ * - frenata automatica/up-shift ritardato, down-shift anticipato in curva
+ * - dead-time di 0,25 s per evitare rimbalzi di marcia
  *
- * Il resto della logica (sterzo proporzionale, fuzzy‑speed su track sensors,
+ * Il resto della logica (sterzo proporzionale, fuzzy-speed su track sensors,
  * ABS, gestione stuck, clutch) resta invariato.
  */
 public class SimpleDriver extends Controller implements Serializable {
@@ -23,13 +23,13 @@ public class SimpleDriver extends Controller implements Serializable {
     private static final float STEER_SENS_OFFSET = 80f;         // km/h
     private static final float WHEEL_SENS_COEFF = 1f;
 
-    // target‑speed / curva
+    // target-speed / curva
     private static final float MAX_SPEED_DIST = 70f;            // m: oltre questo rettilineo = full gas
     private static final float MAX_SPEED      = 150f;           // km/h
     private static final float SIN5 = 0.08716f;                 // sin(5°)
     private static final float COS5 = 0.99619f;                 // cos(5°)
 
-    // stuck‑logic
+    // stuck-logic
     private static final int   STUCK_TIME  = 25;                // ticks
     private static final float STUCK_ANGLE = 0.523598775f;      // 30° rad
 
@@ -119,7 +119,7 @@ public class SimpleDriver extends Controller implements Serializable {
         return targetAngle / STEER_LOCK;
     }
 
-    /* ===== target‑speed fuzzy + "turbo" on straights ===== */
+    /* ===== target-speed fuzzy + "turbo" on straights ===== */
     private float getAccel(SensorModel sensors) {
         if (sensors.getTrackPosition() > -1 && sensors.getTrackPosition() < 1) {
             float center = (float) sensors.getTrackEdgeSensors()[9];
@@ -141,7 +141,7 @@ public class SimpleDriver extends Controller implements Serializable {
             }
             return (float) (2 / (1 + Math.exp(sensors.getSpeed() - targetSpeed)) - 1);
         }
-        return 0.3f; // off‑track recovery accel
+        return 0.3f; // off-track recovery accel
     }
 
     /* ===== cambio marcia suggerito ===== */
@@ -167,7 +167,7 @@ public class SimpleDriver extends Controller implements Serializable {
             return lastGear;
         }
 
-        // up‑shift
+        // up-shift
         if (g < 6 && rpm >= RPM_UP[g - 1]) {
             double rpmAfterUp = rpm * (GEAR_RATIO[g] / GEAR_RATIO[g + 1]);
             if (rpmAfterUp >= 3000) {
@@ -178,7 +178,7 @@ public class SimpleDriver extends Controller implements Serializable {
             }
         }
 
-        // down‑shift
+        // down-shift
         boolean needDown = rpm <= RPM_DOWN[g - 1] || (aa > ANG_CURVE && rpm < 5500);
         if (needDown && g > 1) {
             double rpmAfterDown = rpm * (GEAR_RATIO[g] / GEAR_RATIO[g - 1]);

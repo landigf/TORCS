@@ -6,7 +6,7 @@ import java.util.Deque;
 
 /**
  * Simple LRU cache for KNN inference results.
- * Keeps the last N (input, action) pairs and re‑uses the action
+ * Keeps the last N (input, action) pairs and re-uses the action
  * if a new query is within tol (L2) of a cached input.
  */
 public class ActionCache {

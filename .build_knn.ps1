@@ -1,8 +1,8 @@
 <#
     Build-KNN.ps1
     -----------------------------
-    • Compila le classi Java essenziali (KD‑Tree, scaler, builder, driver)
-    • Genera i KD‑Tree segmentati con SegmentKDBuilder (nessun scr.jar richiesto)
+    • Compila le classi Java essenziali (KD-Tree, scaler, builder, driver)
+    • Genera i KD-Tree segmentati con SegmentKDBuilder (nessun scr.jar richiesto)
 #>
 
 param(
@@ -10,7 +10,7 @@ param(
     [string]$Config      = "sensors",                 # default feature set
 
     [string]$DatasetPath = "classes/dataset_union.csv",
-    [int]   $Segments    = 35                          # KD‑Tree da creare
+    [int]   $Segments    = 35                          # KD-Tree da creare
 )
 
 Write-Host "`n=== BUILD KNN SEGMENTED MODEL ===" -ForegroundColor Green
@@ -32,8 +32,8 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "ERRORE: compilazione core fallita" -ForegroundColor Red; exit 1
 }
 
-# ─── STEP 2: Genera KD‑Tree segmentati ───────────────────────────────
-Write-Host "Step 2: Creazione KD‑Tree segmentati..." -ForegroundColor Cyan
+# ─── STEP 2: Genera KD-Tree segmentati ───────────────────────────────
+Write-Host "Step 2: Creazione KD-Tree segmentati..." -ForegroundColor Cyan
 Push-Location classes
 try {
     java scr.ai.SegmentKDBuilder "../$DatasetPath" $Segments
@@ -53,7 +53,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # ─── Output finale ───────────────────────────────────────────────────
 Write-Host "`n=== BUILD COMPLETATO ===" -ForegroundColor Green
-Write-Host ("Generati: knn_seg_00.tree … knn_seg_{0:D2}.tree" -f ($Segments-1)) -ForegroundColor Yellow
+Write-Host ("Generati: knn_seg_00.tree -> knn_seg_{0:D2}.tree" -f ($Segments-1)) -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Per testare il driver:" -ForegroundColor Cyan
 Write-Host -ForegroundColor White "  cd classes"
