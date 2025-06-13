@@ -23,7 +23,11 @@ if csv_files:
         df_list.append(df)
     union_df = pd.concat(df_list, ignore_index=True)
     union_df = union_df.sort_values('distanceFromStart').reset_index(drop=True)
-    print(f"Totale righe: {len(union_df)}")
+    
+    # Randomly sample half of the rows
+    union_df = union_df.sample(frac=0.5, random_state=42).reset_index(drop=True)
+    
+    print(f"Totale righe dopo sampling: {len(union_df)}")
     print("Head del dataset unito:")
     print(union_df.head())
     union_df.to_csv(output_file, index=False)

@@ -1,9 +1,15 @@
 package scr.ai;
 
+import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.io.ObjectInputStream;
+import java.io.PrintWriter;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import scr.Action;
 import scr.SensorModel;
@@ -20,12 +26,12 @@ import scr.SimpleDriver;
 public class KNNDriver extends SimpleDriver {
 
     /* ====== configurazione globale ====== */
-    private static final int SEGMENTS = 35;   // deve combaciare con il builder
-    private static final int MIN_K    = 3;
+    private static final int SEGMENTS = 32;   // deve combaciare con il builder
+    private static final int MIN_K    = 4;
     private static final int MAX_K    = 5;
 
     /* watchdog / profilo */
-    private static final long LOG_INTERVAL_NS = 5_000_000_000L; // 5 s
+    //private static final long LOG_INTERVAL_NS = 5_000_000_000L; // 5 s
 
     /* ====== modelli & fallback ====== */
     private final KDTree[] trees = new KDTree[SEGMENTS];
@@ -36,21 +42,26 @@ public class KNNDriver extends SimpleDriver {
 
     /** Pesi della distanza per feature – "default" vale per tutte le altre. */
     private static final Map<String, Double> FEAT_W = Map.of(
-        "distanceFromStart", 5.0,
-        "angle",              2.0,
-        "trackPos",           2.5,
+        "distanceFromStart",  4.0,
+        "angle",              1.2,
+        "trackPos",           3.0,
+        "speedX",           3.0,
+        "speedY",           1.3,
         "default",            1.0);
 
     /* OOD guard */
-    private static final double OOD_THRESHOLD = 0.5;
+    private static final double OOD_THRESHOLD = 0.6;
 
     /* stats */
-    private long totTime  = 0;
-    private long frames   = 0;
-    private long maxDelay = 0;
-    private long lastLog  = System.nanoTime();
+    // private long totTime  = 0;
+    // private long frames   = 0;
+    // private long maxDelay = 0;
+    // private long lastLog  = System.nanoTime();
 
     private final SimpleGear gearChanger = new SimpleGear();
+
+    private PrintWriter log;
+    private long t0;          // timestamp di riferimento per la colonna “time”
 
     /* ====== ctor ====== */
     public KNNDriver() {
@@ -65,6 +76,22 @@ public class KNNDriver extends SimpleDriver {
                 System.err.printf("[WARN] KD-Tree %02d mancante: %s\n", i, e.getMessage());
             }
         }
+
+        try {
+            File f = new File("drive_log.csv");
+            log = new PrintWriter(new FileWriter(f, true), true);
+            if (f.length() == 0) {
+                String header = "time,angle,curLapTime,distanceFromStart,fuel,damage,gear,rpm," +
+                                "speedX,speedY,speedZ,lastLapTime," +
+                                IntStream.range(0,19).mapToObj(i -> "track"+i)
+                                        .collect(Collectors.joining(",")) + "," +
+                                "wheel0,wheel1,wheel2,wheel3,trackPos,steer,accel,brake";
+                log.println(header);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Cannot open drive_log.csv", e);
+        }
+
     }
 
     /* ====== loop principale ====== */
@@ -74,12 +101,18 @@ public class KNNDriver extends SimpleDriver {
         double rawDist  = s.getDistanceFromStartLine();
         double normDist = FeatureScaler.normalize("distanceFromStart", rawDist);
         int seg         = (int) Math.floor(normDist * SEGMENTS) % SEGMENTS;
+        System.out.printf("\n^^^[INFO] distanceFromStart=%.3f, segment=%02d%n", rawDist, seg);
         double trackPos = s.getTrackPosition();
         boolean offTrack = (trackPos <= -1.00 || trackPos >= 1.00);
         boolean isStuck  = s.getTrackEdgeSensors()[9] == -1.0;
-        if (offTrack || s.getSpeed() < 7 || isStuck) {
+        
+        /* ====== logging ====== */
+        Action fallbackAction = fallback.control(s);
+        if (offTrack || s.getSpeed() <= 7 || isStuck) {
             System.err.printf("\n---------->[WARN] Off-track: %.2f, Speed: %.2f, Stuck: %b%n", trackPos, s.getSpeed(), isStuck);
-            return fallback.control(s);
+            //return fallback.control(s);
+            writeLog(s, fallbackAction);
+            return fallbackAction;
         }
         boolean isStraight = Math.abs(s.getAngleToTrackAxis()) < 0.1;
 
@@ -90,7 +123,11 @@ public class KNNDriver extends SimpleDriver {
         
         
         KDTree tree     = selectTree(seg);
-        if (tree == null) return fallback.control(s);
+        if (tree == null) {
+            //return fallback.control(s);
+            writeLog(s, fallbackAction);
+            return fallbackAction;
+        }
         System.out.printf("[INFO] Segmento %02d, distanza normalizzata=%.3f%n", seg, normDist);
 
         /* ------ k dinamico ------ */
@@ -103,7 +140,9 @@ public class KNNDriver extends SimpleDriver {
         double nearest = weightedDist(in, nn.get(0).features);
         if (nearest > OOD_THRESHOLD && !isStraight) {
             System.err.printf("\n==============================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
-            return fallback.control(s);
+            //return fallback.control(s);
+            writeLog(s, fallbackAction);
+            return fallbackAction;
         } 
 
         /* ------ media delle azioni ------ */
@@ -116,16 +155,19 @@ public class KNNDriver extends SimpleDriver {
 
         /* ------ profiling temporale ------ */
 
-        long now = System.nanoTime();
-        if (now - lastLog >= LOG_INTERVAL_NS) {
-            double avg = (double) totTime / frames;
-            System.out.printf("[INFO] avg %.2f ms   max %d ms\n", avg, maxDelay);
-            lastLog = now;
-            maxDelay = 0;
-        }
+        // long now = System.nanoTime();
+        // if (now - lastLog >= LOG_INTERVAL_NS) {
+        //     double avg = (double) totTime / frames;
+        //     System.out.printf("[INFO] avg %.2f ms   max %d ms\n", avg, maxDelay);
+        //     lastLog = now;
+        //     maxDelay = 0;
+        // }
 
         /* clamp steering finale */
         out.steering = Math.max(-1.0, Math.min(1.0, out.steering));
+
+        /* ====== logging ====== */
+        writeLog(s, knnAction);
         return out;
     }
 
@@ -219,8 +261,48 @@ public class KNNDriver extends SimpleDriver {
     /* ====== lifecycle ====== */
     @Override
     public void reset() {
-        totTime = frames = maxDelay = 0;
-        lastLog = System.nanoTime();
+        //totTime = frames = maxDelay = 0;
+        //lastLog = System.nanoTime();
+
+        /* ====== logging ====== */
+        t0 = System.currentTimeMillis(); // reset timestamp
     }
-    @Override public void shutdown() {}
+
+    /* ====== logging ====== */
+    @Override public void shutdown() {
+        if (log != null) log.close();
+    }
+
+    /* ====== logging ====== */
+    private void writeLog(SensorModel s, Action a) {
+        // --- raccolta dati sensori ---
+        double angle       = s.getAngleToTrackAxis();
+        double curLapTime  = s.getCurrentLapTime();
+        double distance    = s.getDistanceFromStartLine();
+        double fuel        = s.getFuelLevel();
+        double damage      = s.getDamage();
+        double rpm         = s.getRPM();
+        double speedX      = s.getSpeed();
+        double speedY      = s.getLateralSpeed();
+        double speedZ      = s.getZSpeed();
+        double lastLapTime = s.getLastLapTime();
+        double[] trackArr  = s.getTrackEdgeSensors();
+        double[] wheelSpin = s.getWheelSpinVelocity();
+        double trackPos    = s.getTrackPosition();
+        long    time       = System.currentTimeMillis() - t0;
+        StringBuilder sb = new StringBuilder();
+        sb.append(time).append(',').append(angle).append(',')
+        .append(curLapTime).append(',').append(distance).append(',')
+        .append(fuel).append(',').append(damage).append(',')
+        .append(a.gear).append(',').append(rpm).append(',')
+        .append(speedX).append(',').append(speedY).append(',')
+        .append(speedZ).append(',').append(lastLapTime);
+        for (double d : trackArr)  sb.append(',').append(d);
+        for (double w : wheelSpin) sb.append(',').append(w);
+        sb.append(',').append(trackPos)
+        .append(',').append(a.steering)
+        .append(',').append(a.accelerate)
+        .append(',').append(a.brake);
+        log.println(sb.toString());   // scrivi su log
+    }
 }
