@@ -1,6 +1,7 @@
 package scr;
 
 import java.io.Serializable;
+import scr.ai.SimpleGear;
 
 /**
  * SimpleDriver - versione 2025-06-11 con cambio marcia evoluto.
@@ -16,6 +17,7 @@ import java.io.Serializable;
 public class SimpleDriver extends Controller implements Serializable {
 
     private static final long serialVersionUID = 1L;
+    SimpleGear gearChanger = new SimpleGear();
 
     /* ===== costanti veicolo / pista ===== */
     // sterzo
@@ -25,7 +27,7 @@ public class SimpleDriver extends Controller implements Serializable {
 
     // target-speed / curva
     private static final float MAX_SPEED_DIST = 70f;            // m: oltre questo rettilineo = full gas
-    private static final float MAX_SPEED      = 150f;           // km/h
+    private static final float MAX_SPEED      = 180f;           // km/h
     private static final float SIN5 = 0.08716f;                 // sin(5°)
     private static final float COS5 = 0.99619f;                 // cos(5°)
 
@@ -49,15 +51,15 @@ public class SimpleDriver extends Controller implements Serializable {
     private static final float CLUTCH_MAX_TIME     = 1.5f;
 
     /* ===== cambio marcia evoluto ===== */
-    private static final double[] GEAR_RATIO = { 0, 3.60, 2.19, 1.59, 1.29, 1.05, 0.88 };
-    private static final double[] RPM_UP     = { 7200, 7400, 7600, 7800, 8000, 99999 };
-    private static final double[] RPM_DOWN   = { 0,    2600, 3000, 3200, 3500, 4000 };
-    private static final double   ANG_CURVE  = 0.12;            // rad (≈7°)
-    private static final long     SHIFT_DEAD_NS = 250_000_000L; // 0.25 s
+    // private static final double[] GEAR_RATIO = { 0, 3.60, 2.19, 1.59, 1.29, 1.05, 0.88 };
+    // private static final double[] RPM_UP     = { 7200, 7400, 7600, 7800, 8000, 99999 };
+    // private static final double[] RPM_DOWN   = { 0,    2600, 3000, 3200, 3500, 4000 };
+    // private static final double   ANG_CURVE  = 0.12;            // rad (≈7°)
+    // private static final long     SHIFT_DEAD_NS = 250_000_000L; // 0.25 s
 
-    private int   lastGear  = 1;
-    private long  lastShift = 0L;
-    private double lastSpeed = 0.0;
+    // private int   lastGear  = 1;
+    // private long  lastShift = 0L;
+    // private double lastSpeed = 0.0;
 
     /* ===== variabili di stato ===== */
     private int   stuck  = 0;
@@ -85,7 +87,7 @@ public class SimpleDriver extends Controller implements Serializable {
 
         /* ---------- logica normale ---------- */
         float accelAndBrake = getAccel(sensors);
-        int   gear          = chooseGear(sensors);
+        int   gear          = gearChanger.chooseGear(sensors);
         float steer         = getSteer(sensors);
 
         // normalizza sterzo
@@ -145,56 +147,56 @@ public class SimpleDriver extends Controller implements Serializable {
     }
 
     /* ===== cambio marcia suggerito ===== */
-    private int chooseGear(SensorModel s) {
-        int    g   = s.getGear();
-        double rpm = s.getRPM();
-        double v   = s.getSpeed();
-        double aa  = Math.abs(s.getAngleToTrackAxis());
+    // private int chooseGear(SensorModel s) {
+    //     int    g   = s.getGear();
+    //     double rpm = s.getRPM();
+    //     double v   = s.getSpeed();
+    //     double aa  = Math.abs(s.getAngleToTrackAxis());
 
-        if (g < 1) return 1;
+    //     if (g < 1) return 1;
 
-        long now = System.nanoTime();
-        double decel = lastSpeed - v;  // km/h persi nell’ultimo tick
-        if (g == 6 && decel >= 1) {    // frenata sensibile
-            lastShift = now;
-            lastGear  = g - 1;
-            lastSpeed = v;
-            return lastGear;
-        }
+    //     long now = System.nanoTime();
+    //     double decel = lastSpeed - v;  // km/h persi nell’ultimo tick
+    //     if (g == 6 && decel >= 1) {    // frenata sensibile
+    //         lastShift = now;
+    //         lastGear  = g - 1;
+    //         lastSpeed = v;
+    //         return lastGear;
+    //     }
 
-        if (now - lastShift < SHIFT_DEAD_NS) {
-            lastSpeed = v;
-            return lastGear;
-        }
+    //     if (now - lastShift < SHIFT_DEAD_NS) {
+    //         lastSpeed = v;
+    //         return lastGear;
+    //     }
 
-        // up-shift
-        if (g < 6 && rpm >= RPM_UP[g - 1]) {
-            double rpmAfterUp = rpm * (GEAR_RATIO[g] / GEAR_RATIO[g + 1]);
-            if (rpmAfterUp >= 3000) {
-                lastShift = now;
-                lastGear  = g + 1;
-                lastSpeed = v;
-                return lastGear;
-            }
-        }
+    //     // up-shift
+    //     if (g < 6 && rpm >= RPM_UP[g - 1]) {
+    //         double rpmAfterUp = rpm * (GEAR_RATIO[g] / GEAR_RATIO[g + 1]);
+    //         if (rpmAfterUp >= 3000) {
+    //             lastShift = now;
+    //             lastGear  = g + 1;
+    //             lastSpeed = v;
+    //             return lastGear;
+    //         }
+    //     }
 
-        // down-shift
-        boolean needDown = rpm <= RPM_DOWN[g - 1] || (aa > ANG_CURVE && rpm < 5500);
-        if (needDown && g > 1) {
-            double rpmAfterDown = rpm * (GEAR_RATIO[g] / GEAR_RATIO[g - 1]);
-            if (rpmAfterDown <= 9000) {
-                lastShift = now;
-                lastGear  = g - 1;
-                lastSpeed = v;
-                return lastGear;
-            }
-        }
+    //     // down-shift
+    //     boolean needDown = rpm <= RPM_DOWN[g - 1] || (aa > ANG_CURVE && rpm < 5500);
+    //     if (needDown && g > 1) {
+    //         double rpmAfterDown = rpm * (GEAR_RATIO[g] / GEAR_RATIO[g - 1]);
+    //         if (rpmAfterDown <= 9000) {
+    //             lastShift = now;
+    //             lastGear  = g - 1;
+    //             lastSpeed = v;
+    //             return lastGear;
+    //         }
+    //     }
 
-        // nessun cambio
-        lastSpeed = v;
-        lastGear  = g;
-        return g;
-    }
+    //     // nessun cambio
+    //     lastSpeed = v;
+    //     lastGear  = g;
+    //     return g;
+    // }
 
     /* ===== gestione recupero da stuck ===== */
     private Action recoverFromStuck(SensorModel sensors) {

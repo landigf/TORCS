@@ -10,7 +10,7 @@ param(
     [string]$Config      = "sensors",                 # default feature set
 
     [string]$DatasetPath = "classes/dataset_union.csv",
-    [int]   $Segments    = 35                          # KD-Tree da creare
+    [int]   $Segments    = 32                          # KD-Tree da creare
 )
 
 Write-Host "`n=== BUILD KNN SEGMENTED MODEL ===" -ForegroundColor Green

@@ -3,7 +3,7 @@ import os
 import pandas as pd
 
 input_dir = 'classes'
-output_file = os.path.join(input_dir, 'dataset_union.csv')
+output_file = os.path.join(input_dir, 'dataset_ordinato.csv')
 
 # Match both drive_log.csv and drive_log*_clean.csv
 csv_files = glob.glob(os.path.join(input_dir, 'drive*_clean.csv'))
@@ -23,7 +23,8 @@ if csv_files:
         df_list.append(df)
     union_df = pd.concat(df_list, ignore_index=True)
     union_df = union_df.sort_values('distanceFromStart').reset_index(drop=True)
-    print(f"Totale righe: {len(union_df)}")
+    
+    print(f"Totale righe dopo sampling: {len(union_df)}")
     print("Head del dataset unito:")
     print(union_df.head())
     union_df.to_csv(output_file, index=False)

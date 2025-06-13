@@ -4,10 +4,10 @@ import os
 
 input_dir = "classes"  # Adjust this path as needed
 
-# Match toClean*.csv files
-csv_files = glob.glob(os.path.join(input_dir, 'toClean*.csv'))
+# Match both drive_log.csv and drive_log%.csv
+csv_files = glob.glob(os.path.join(input_dir, 'drive*_clean.csv'))
 
-# Remove duplicates in case files are matched twice
+# Remove duplicates in case drive_log.csv is matched twice
 csv_files = list(set(csv_files))
 
 for csv_file in csv_files:
@@ -30,17 +30,9 @@ for csv_file in csv_files:
     
     # Remove rows where any track* column has value -1.0
     
-    # Remove rows with steer outside [-1, 1]
-    if 'steer' in df_clean.columns:
-        df_clean = df_clean[(df_clean['steer'] >= -1) & (df_clean['steer'] <= 1)]
-    
-    # Remove rows with accel outside [0, 1]
-    if 'accel' in df_clean.columns:
-        df_clean = df_clean[(df_clean['accel'] >= 0) & (df_clean['accel'] <= 1)]
-    
-    # Remove rows with brake outside [0, 1]
-    if 'brake' in df_clean.columns:
-        df_clean = df_clean[(df_clean['brake'] >= 0) & (df_clean['brake'] <= 1)]
+    # Remove rows where distanceFromStart < 3569
+    if 'distanceFromStart' in df_clean.columns:
+        df_clean = df_clean[df_clean['distanceFromStart'] >= 3569]
     
     # Remove rows where lastLapTime == x
     #if 'lastLapTime' in df_clean.columns:
@@ -51,9 +43,9 @@ for csv_file in csv_files:
     # Save with _clean suffix
     base_name = os.path.basename(csv_file)
     name_without_ext = os.path.splitext(base_name)[0]
-    # Convert from toClean1 to clean1 format
-    if name_without_ext.startswith('toClean'):
-        clean_name = name_without_ext.replace('toClean', 'clean')
+    # Convert from drive_log1 to drive1_clean format
+    if name_without_ext.startswith('drive_log'):
+        clean_name = name_without_ext.replace('drive_log', 'drive') + '_clean'
     else:
         clean_name = name_without_ext + '_clean'
     output_file = os.path.join(os.path.dirname(csv_file), clean_name + '.csv')
