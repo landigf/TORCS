@@ -82,7 +82,6 @@ public class KNNDriver extends SimpleDriver {
             return fallback.control(s);
         }
         boolean isStraight = Math.abs(s.getAngleToTrackAxis()) < 0.1;
-        long t0 = System.nanoTime();
 
         /* ------ estrai le feature normalizzate ------ */
         double[] in = extractFeatures(s);
@@ -97,27 +96,15 @@ public class KNNDriver extends SimpleDriver {
         /* ------ k dinamico ------ */
         int k = dynamicK(s);
         System.out.printf("[INFO] k=%d (dynamic based on angle %.2f)\n", k, s.getAngleToTrackAxis());
-        if (seg == 29) {
-            System.out.printf("[INFO] Segmento 29: k=%d (curva media)\n", MIN_K);
-            k = 2;
-        } else if (seg == 13 || seg == 14 || seg == 15 || seg == 16 || seg == 17) {
-            System.out.printf("[INFO] Segmento : k=%d (curva stretta)\n", MIN_K + 1);
-            k = 4;
-        } else if (seg == 22 || seg == 23) {
-            System.out.printf("[INFO] Segmento 22-23: k=%d (S)\n", MAX_K);
-            k = 3;
-        }
+
         List<DataPoint> nn = tree.nearest(in, k);
 
         /* ------ Out-of-Distribution guard ------ */
         double nearest = weightedDist(in, nn.get(0).features);
-        if (nearest > OOD_THRESHOLD && !isStraight && seg <= 30) {
+        if (nearest > OOD_THRESHOLD && !isStraight) {
             System.err.printf("\n==============================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
             return fallback.control(s);
-        } if (seg == 22 || seg == 23 && nearest > 0.26) {
-            System.err.printf("\n=================->->==========\n[WARN] Segmento 22-23: OOD guard attivata, ma proseguo.\n");
-            return fallback.control(s);
-        }
+        } 
 
         /* ------ media delle azioni ------ */
         double[] actArr = averageAction(nn);
@@ -128,10 +115,6 @@ public class KNNDriver extends SimpleDriver {
         Action out = knnAction;          // per ora usiamo solo il KNN puro
 
         /* ------ profiling temporale ------ */
-        long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
-        totTime += elapsedMs;
-        frames++;
-        if (elapsedMs > maxDelay) maxDelay = elapsedMs;
 
         long now = System.nanoTime();
         if (now - lastLog >= LOG_INTERVAL_NS) {
@@ -143,10 +126,6 @@ public class KNNDriver extends SimpleDriver {
 
         /* clamp steering finale */
         out.steering = Math.max(-1.0, Math.min(1.0, out.steering));
-        if (seg == 26 || seg == 27 || seg == 28) {
-            out.steering = 0;
-            out.brake = 0;
-        }
         return out;
     }
 
