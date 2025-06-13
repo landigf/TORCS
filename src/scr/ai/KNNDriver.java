@@ -27,8 +27,8 @@ public class KNNDriver extends SimpleDriver {
 
     /* ====== configurazione globale ====== */
     private static final int SEGMENTS = 32;   // deve combaciare con il builder
-    private static final int MIN_K    = 4;
-    private static final int MAX_K    = 5;
+    private static final int MIN_K    = 3;
+    private static final int MAX_K    = 6;
 
     /* watchdog / profilo */
     //private static final long LOG_INTERVAL_NS = 5_000_000_000L; // 5 s
@@ -42,15 +42,13 @@ public class KNNDriver extends SimpleDriver {
 
     /** Pesi della distanza per feature – "default" vale per tutte le altre. */
     private static final Map<String, Double> FEAT_W = Map.of(
-        "distanceFromStart",  4.0,
-        "angle",              1.2,
-        "trackPos",           3.0,
-        "speedX",           3.0,
-        "speedY",           1.3,
+        "distanceFromStart", 0.0,
+        "angle",              3.0,
+        "trackPos",        1.0,
         "default",            1.0);
 
     /* OOD guard */
-    private static final double OOD_THRESHOLD = 0.6;
+    private static final double OOD_THRESHOLD = 2.0;
 
     /* stats */
     // private long totTime  = 0;
@@ -102,19 +100,19 @@ public class KNNDriver extends SimpleDriver {
         double normDist = FeatureScaler.normalize("distanceFromStart", rawDist);
         int seg         = (int) Math.floor(normDist * SEGMENTS) % SEGMENTS;
         System.out.printf("\n^^^[INFO] distanceFromStart=%.3f, segment=%02d%n", rawDist, seg);
-        double trackPos = s.getTrackPosition();
-        boolean offTrack = (trackPos <= -1.00 || trackPos >= 1.00);
-        boolean isStuck  = s.getTrackEdgeSensors()[9] == -1.0;
+        //double trackPos = s.getTrackPosition();
+        //boolean offTrack = (trackPos <= -1.00 || trackPos >= 1.00);
+        //boolean isStuck  = s.getTrackEdgeSensors()[9] == -1.0;
         
         /* ====== logging ====== */
         Action fallbackAction = fallback.control(s);
-        if (offTrack || s.getSpeed() <= 7 || isStuck) {
-            System.err.printf("\n---------->[WARN] Off-track: %.2f, Speed: %.2f, Stuck: %b%n", trackPos, s.getSpeed(), isStuck);
-            //return fallback.control(s);
-            writeLog(s, fallbackAction);
-            return fallbackAction;
-        }
-        boolean isStraight = Math.abs(s.getAngleToTrackAxis()) < 0.1;
+        // if (offTrack || s.getSpeed() <= 7 || isStuck) {
+        //     System.err.printf("\n---------->[WARN] Off-track: %.2f, Speed: %.2f, Stuck: %b%n", trackPos, s.getSpeed(), isStuck);
+        //     //return fallback.control(s);
+        //     writeLog(s, fallbackAction);
+        //     return fallbackAction;
+        // }
+        
 
         /* ------ estrai le feature normalizzate ------ */
         double[] in = extractFeatures(s);
@@ -136,9 +134,10 @@ public class KNNDriver extends SimpleDriver {
 
         List<DataPoint> nn = tree.nearest(in, k);
 
+        //boolean isStraight = Math.abs(s.getAngleToTrackAxis()) < 0.1;
         /* ------ Out-of-Distribution guard ------ */
         double nearest = weightedDist(in, nn.get(0).features);
-        if (nearest > OOD_THRESHOLD && !isStraight) {
+        if (nearest > OOD_THRESHOLD) {
             System.err.printf("\n==============================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
             //return fallback.control(s);
             writeLog(s, fallbackAction);
