@@ -30,7 +30,7 @@ public class DatasetBuilder {
         "speedX", "speedY",
         // visibilità pista (5 sensori)
         "track0", "track5", "track9","track13", "track18",
-        "track12", /* AGGIUNTO */
+        "track12", /* AGGIUNTO test*/
         // posizione
         "trackPos", "distanceFromStart"
     };
