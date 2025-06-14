@@ -33,15 +33,18 @@ public class SegmentKDBuilder {
 
         // Locate the index of the distanceFromStart feature
         int distIdx = -1;
+        System.out.println("Searching for distanceFromStart among features:");
         for (int i = 0; i < FEATURE_COLS.length; i++) {
+            System.out.printf("  [%d] %s%n", i, FEATURE_COLS[i]);
             if ("distanceFromStart".equals(FEATURE_COLS[i])) {
-                distIdx = i;
-                break;
+            distIdx = i;
+            break;
             }
         }
         if (distIdx == -1) {
             throw new IllegalStateException("distanceFromStart column missing in configuration");
         }
+        System.out.printf("Found distanceFromStart at index %d%n", distIdx);
 
         // Create buckets
         @SuppressWarnings("unchecked")

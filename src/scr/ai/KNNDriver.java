@@ -1,15 +1,15 @@
 package scr.ai;
 
-import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.PrintWriter;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
+// import java.util.stream.Collectors;
+// import java.util.stream.IntStream;
+// import java.io.FileWriter;
+// import java.io.IOException;
+// import java.io.File;
 
 import scr.Action;
 import scr.SensorModel;
@@ -44,10 +44,12 @@ public class KNNDriver extends SimpleDriver {
     static double wDFS = 1.2; // peso per distanceFromStart
     static double wAngle = 1.2; // peso per angle
     static double wSpeedX = 1.0; // peso per speedX
+    static double wTrack13 = 2.0; // peso per track13 (se usata)
     private static final Map<String, Double> FEAT_W = Map.of(
         "distanceFromStart",  wDFS,
         "angle",              wAngle,
         "speedX",             wSpeedX,
+        "track13",            wTrack13,
         "default",            1.0);
 
     /* OOD guard */
@@ -62,7 +64,7 @@ public class KNNDriver extends SimpleDriver {
     private final SimpleGear gearChanger = new SimpleGear();
 
     private PrintWriter log;
-    private long t0;          // timestamp di riferimento per la colonna “time”
+    //private long t0;          // timestamp di riferimento per la colonna “time”
 
     /* ====== ctor ====== */
     public KNNDriver() {
@@ -78,20 +80,20 @@ public class KNNDriver extends SimpleDriver {
             }
         }
 
-        try {
-            File f = new File("drive_log.csv");
-            log = new PrintWriter(new FileWriter(f, false), true);
-            if (f.length() == 0) {
-                String header = "time,angle,curLapTime,distanceFromStart,fuel,damage,gear,rpm," +
-                                "speedX,speedY,speedZ,lastLapTime," +
-                                IntStream.range(0,19).mapToObj(i -> "track"+i)
-                                        .collect(Collectors.joining(",")) + "," +
-                                "wheel0,wheel1,wheel2,wheel3,trackPos,steer,accel,brake";
-                log.println(header);
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Cannot open drive_log.csv", e);
-        }
+        // try {
+        //     File f = new File("drive_log.csv");
+        //     log = new PrintWriter(new FileWriter(f, false), true);
+        //     if (f.length() == 0) {
+        //         String header = "time,angle,curLapTime,distanceFromStart,fuel,damage,gear,rpm," +
+        //                         "speedX,speedY,speedZ,lastLapTime," +
+        //                         IntStream.range(0,19).mapToObj(i -> "track"+i)
+        //                                 .collect(Collectors.joining(",")) + "," +
+        //                         "wheel0,wheel1,wheel2,wheel3,trackPos,steer,accel,brake";
+        //         log.println(header);
+        //     }
+        // } catch (IOException e) {
+        //     throw new RuntimeException("Cannot open drive_log.csv", e);
+        // }
 
     }
 
@@ -102,17 +104,38 @@ public class KNNDriver extends SimpleDriver {
         double rawDist  = s.getDistanceFromStartLine();
         double normDist = FeatureScaler.normalize("distanceFromStart", rawDist);
         int seg         = (int) Math.floor(normDist * SEGMENTS) % SEGMENTS;
-        System.out.printf("\n^^^[INFO] distanceFromStart=%.3f, segment=%02d%n", rawDist, seg);
+        System.out.printf("\n^^^[INFO] distanceFromStart=%.3f - segment=%02d%n", rawDist, seg);
         double trackPos = s.getTrackPosition();
         boolean offTrack = (trackPos <= -1.2 || trackPos >= 1.2);
         //boolean isStuck  = s.getTrackEdgeSensors()[9] == -1.0;
         
         /* ====== logging ====== */
         Action fallbackAction = fallback.control(s);
-        if (offTrack || s.getSpeed() <= 7 && seg != 0 && seg != SEGMENTS - 1 /*    */) {
-            System.err.printf("[WARN] sing fallback action%n", s.getSpeed());
-            writeLog(s, fallbackAction);
-            return fallbackAction;
+        fallbackAction.steering = Math.max(-0.5, Math.min(0.5, fallbackAction.steering)); // clamp steering
+
+        /* ====== DA CONTROLLARE =======
+         * ci mettiamo tutti quelli dove per ora fa ancora casino
+         * 
+        */
+        if (seg == 21 && rawDist <= 3670) {
+            fallbackAction.brake = Math.min(0.2, fallbackAction.brake); // frena in questo segmento
+        } else if (seg >= 23 && seg <= 26 && rawDist <= 4750) {
+            fallbackAction.accelerate = 1.0;
+            fallbackAction.brake      = 0.0; // accelera in questi segmenti
+        } else if (seg == 26) {
+            fallbackAction.accelerate = 0.0;
+            fallbackAction.brake      = 0.5; // accelera in questi segmenti
+            if (trackPos < -1.0) fallbackAction.steering = 0.2; // evita steering negativo
+            else if (trackPos > 1.0) fallbackAction.steering = -0.2; // evita steering positivo
+        }
+        // // ----------------------------------prova a togliere 20
+        boolean isDangerous = /*seg == 15 ||*/ seg == 20 || seg == 21 || seg == 22 || seg == 23 || seg == 26 /*|| seg == 27*/ || seg == 28 || seg == 29;
+        if (seg != 0 && seg != SEGMENTS - 1) {
+            if (offTrack || s.getSpeed() <= 7 || isDangerous || (seg == 15 && rawDist > 2746)) {
+                System.err.printf("[WARN] fallback action - trackPos: %.2f", trackPos);
+                //writeLog(s, fallbackAction);
+                return fallbackAction;
+            }
         }
 
         // if (offTrack || s.getSpeed() <= 7 || isStuck) {
@@ -132,7 +155,7 @@ public class KNNDriver extends SimpleDriver {
         KDTree tree     = selectTree(seg);
         if (tree == null) {
             //return fallback.control(s);
-            writeLog(s, fallbackAction);
+            //writeLog(s, fallbackAction);
             return fallbackAction;
         }
         System.out.printf("[INFO] Segmento %02d, distanza normalizzata=%.3f%n", seg, normDist);
@@ -150,13 +173,21 @@ public class KNNDriver extends SimpleDriver {
         // }
         System.out.printf("[INFO] k=%d (dynamic based on angle %.2f)\n", k, s.getAngleToTrackAxis());
 
-        if (seg == 13) {
-            wDFS = 3;
+        if (seg == 12 || seg == 13) {
+            wDFS = 1;
             wAngle = 3;
-            k = 7;
+            wTrack13 = 3;
+            k = 5; // era 7
         } else if (seg == 14) {
-            wAngle = 3;
-            k = 6;
+            wTrack13 = 6;
+            wSpeedX = 1.5;
+            wAngle = 1.5;
+            k = 3; // era 5
+        } else if (seg == 27) {
+            wSpeedX = 1.5;
+            wAngle = 1.5;
+            wTrack13 = 6;
+            k = 4; // era 5
         } else {
             wDFS = 1.2; // reset to default
             wAngle = 1.2;
@@ -166,10 +197,10 @@ public class KNNDriver extends SimpleDriver {
         //boolean isStraight = Math.abs(s.getAngleToTrackAxis()) < 0.1;
         /* ------ Out-of-Distribution guard ------ */
         double nearest = weightedDist(in, nn.get(0).features);
-        if (nearest > OOD_THRESHOLD /*&& seg != 9 && seg != 10 && seg != 23 && seg != 20*/) {
+        if (nearest > OOD_THRESHOLD) {
             System.err.printf("\n==============================\n[WARN] OOD guard attivata: nearest=%.3f > threshold=%.3f%n", nearest, OOD_THRESHOLD);
             //return fallback.control(s);
-            writeLog(s, fallbackAction);
+            //writeLog(s, fallbackAction);
             return fallbackAction;
         } 
 
@@ -188,9 +219,32 @@ public class KNNDriver extends SimpleDriver {
             // Bilanciamento 50-50 tra KNN e fallback nei segmenti critici
             double blendRatio = 0.4;
             out.steering = blendRatio * knnAction.steering + (1 - blendRatio) * fallbackAction.steering;
-            out.accelerate = blendRatio * knnAction.accelerate + (1 - blendRatio) * fallbackAction.accelerate; // favorisce accelerazione
+            out.accelerate = blendRatio * knnAction.accelerate + (1 - blendRatio) * fallbackAction.accelerate;
             out.brake = blendRatio * knnAction.brake + (1 - blendRatio) * fallbackAction.brake;
+            if (seg == 21 || seg == 22) {
+                out.brake = Math.max(0.1, out.brake); // frena in questi segmenti
+            }
+        } else if (seg == 14 && rawDist < 2700 && trackPos < 0.0) {
+            out.steering = Math.max(0.0, out.steering); // evita steering negativo in questo segmento
+        } else if (seg == 27 || seg == 28) {
+            if (nearest > OOD_THRESHOLD*0.5) {
+                // Se OOD è alto, usa fallback
+                double blendRatio = 0.2; // 20% KNN, 80% fallback
+                out.steering = blendRatio * knnAction.steering + (1 - blendRatio) * fallbackAction.steering;
+                out.accelerate = blendRatio * knnAction.accelerate + (1 - blendRatio) * fallbackAction.accelerate;
+                out.brake = blendRatio * knnAction.brake + (1 - blendRatio) * fallbackAction.brake;
+            } else {
+                // Altrimenti, usa KNN
+                out = knnAction;
+            }
         }
+        // else if (seg == 14) {
+        //     // In 14 sbaglia
+        //     double blendRatio = 0.8;
+        //     out.steering = blendRatio * knnAction.steering + (1 - blendRatio) * fallbackAction.steering;
+        //     out.accelerate = blendRatio * knnAction.accelerate + (1 - blendRatio) * fallbackAction.accelerate; // favorisce accelerazione
+        //     out.brake = blendRatio * knnAction.brake + (1 - blendRatio) * fallbackAction.brake;
+        // }
 
 
         /* clamp steering finale */
@@ -207,7 +261,9 @@ public class KNNDriver extends SimpleDriver {
                 // Normale limitazione quando non si è vicini ai bordi
                 out.steering = Math.max(-0.3, Math.min(0.3, out.steering));
             }
-        else {
+        else if (seg == 28) {
+            return fallbackAction; // segmento 29: usa fallback
+        } else {
             out.steering = Math.max(-0.17, Math.min(0.17, out.steering));  
         }
 
@@ -218,7 +274,11 @@ public class KNNDriver extends SimpleDriver {
         //if (seg >= 29) out.steering = Math.max(-0.01, Math.min(0.01, out.steering));
         if (trackPos < -1.1 && out.steering < 0) out.steering = 0.17; // limit steering on left edge
         if (trackPos > 1.1 && out.steering > 0) out.steering = -0.17; // limit steering on right edge
-        writeLog(s, knnAction);
+       
+        if (seg == 30 || seg == 31 || seg == 0){
+            out.steering = Math.max(-0.02, Math.min(0.02, out.steering));
+        }
+        //writeLog(s, knnAction);
         return out;
     }
 
@@ -316,7 +376,7 @@ public class KNNDriver extends SimpleDriver {
         //lastLog = System.nanoTime();
 
         /* ====== logging ====== */
-        t0 = System.currentTimeMillis(); // reset timestamp
+        //t0 = System.currentTimeMillis(); // reset timestamp
     }
 
     /* ====== logging ====== */
@@ -325,35 +385,35 @@ public class KNNDriver extends SimpleDriver {
     }
 
     /* ====== logging ====== */
-    private void writeLog(SensorModel s, Action a) {
-        // --- raccolta dati sensori ---
-        double angle       = s.getAngleToTrackAxis();
-        double curLapTime  = s.getCurrentLapTime();
-        double distance    = s.getDistanceFromStartLine();
-        double fuel        = s.getFuelLevel();
-        double damage      = s.getDamage();
-        double rpm         = s.getRPM();
-        double speedX      = s.getSpeed();
-        double speedY      = s.getLateralSpeed();
-        double speedZ      = s.getZSpeed();
-        double lastLapTime = s.getLastLapTime();
-        double[] trackArr  = s.getTrackEdgeSensors();
-        double[] wheelSpin = s.getWheelSpinVelocity();
-        double trackPos    = s.getTrackPosition();
-        long    time       = System.currentTimeMillis() - t0;
-        StringBuilder sb = new StringBuilder();
-        sb.append(time).append(',').append(angle).append(',')
-        .append(curLapTime).append(',').append(distance).append(',')
-        .append(fuel).append(',').append(damage).append(',')
-        .append(a.gear).append(',').append(rpm).append(',')
-        .append(speedX).append(',').append(speedY).append(',')
-        .append(speedZ).append(',').append(lastLapTime);
-        for (double d : trackArr)  sb.append(',').append(d);
-        for (double w : wheelSpin) sb.append(',').append(w);
-        sb.append(',').append(trackPos)
-        .append(',').append(a.steering)
-        .append(',').append(a.accelerate)
-        .append(',').append(a.brake);
-        log.println(sb.toString());   // scrivi su log
-    }
+    // private void writeLog(SensorModel s, Action a) {
+    //     // --- raccolta dati sensori ---
+    //     double angle       = s.getAngleToTrackAxis();
+    //     double curLapTime  = s.getCurrentLapTime();
+    //     double distance    = s.getDistanceFromStartLine();
+    //     double fuel        = s.getFuelLevel();
+    //     double damage      = s.getDamage();
+    //     double rpm         = s.getRPM();
+    //     double speedX      = s.getSpeed();
+    //     double speedY      = s.getLateralSpeed();
+    //     double speedZ      = s.getZSpeed();
+    //     double lastLapTime = s.getLastLapTime();
+    //     double[] trackArr  = s.getTrackEdgeSensors();
+    //     double[] wheelSpin = s.getWheelSpinVelocity();
+    //     double trackPos    = s.getTrackPosition();
+    //     long    time       = System.currentTimeMillis() - t0;
+    //     StringBuilder sb = new StringBuilder();
+    //     sb.append(time).append(',').append(angle).append(',')
+    //     .append(curLapTime).append(',').append(distance).append(',')
+    //     .append(fuel).append(',').append(damage).append(',')
+    //     .append(a.gear).append(',').append(rpm).append(',')
+    //     .append(speedX).append(',').append(speedY).append(',')
+    //     .append(speedZ).append(',').append(lastLapTime);
+    //     for (double d : trackArr)  sb.append(',').append(d);
+    //     for (double w : wheelSpin) sb.append(',').append(w);
+    //     sb.append(',').append(trackPos)
+    //     .append(',').append(a.steering)
+    //     .append(',').append(a.accelerate)
+    //     .append(',').append(a.brake);
+    //     log.println(sb.toString());   // scrivi su log
+    // }
 }

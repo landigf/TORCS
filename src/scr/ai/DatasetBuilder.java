@@ -30,6 +30,7 @@ public class DatasetBuilder {
         "speedX", "speedY",
         // visibilità pista (5 sensori)
         "track0", "track5", "track9","track13", "track18",
+        "track12", /* AGGIUNTO */
         // posizione
         "trackPos", "distanceFromStart"
     };
@@ -130,7 +131,7 @@ public class DatasetBuilder {
 
     /* ===== main ===== */
     public static void main(String[] args) throws Exception {
-        String csv   = args.length > 0 ? args[0] : "drive_log.csv";
+        String csv   = args.length > 0 ? args[0] : "dataset_union.csv";
         String model = args.length > 1 ? args[1] : "knn.tree";
         String cfg   = args.length > 2 ? args[2] : "sensors";
 
