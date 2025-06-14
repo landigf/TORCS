@@ -5,12 +5,6 @@ import java.io.ObjectInputStream;
 import java.io.PrintWriter;
 import java.util.List;
 import java.util.Map;
-// import java.util.stream.Collectors;
-// import java.util.stream.IntStream;
-// import java.io.FileWriter;
-// import java.io.IOException;
-// import java.io.File;
-
 import scr.Action;
 import scr.SensorModel;
 import scr.SimpleDriver;
@@ -52,7 +46,7 @@ public class KNNDriver extends SimpleDriver {
         "track13",            wTrack13,
         "default",            1.0);
 
-    /* OOD guard */
+    /* OOD guard TODDO: prova a cambiare */
     private static final double OOD_THRESHOLD = 3.0;
 
     /* stats */
@@ -119,7 +113,7 @@ public class KNNDriver extends SimpleDriver {
         */
         if (seg == 21 && rawDist <= 3670) {
             fallbackAction.brake = Math.min(0.2, fallbackAction.brake); // frena in questo segmento
-        } else if (seg >= 23 && seg <= 26 && rawDist <= 4750) {
+        } else if (seg >= 23 && seg <= 26 && rawDist <= 4840) {
             fallbackAction.accelerate = 1.0;
             fallbackAction.brake      = 0.0; // accelera in questi segmenti
         } else if (seg == 26) {
@@ -127,13 +121,25 @@ public class KNNDriver extends SimpleDriver {
             fallbackAction.brake      = 0.5; // accelera in questi segmenti
             if (trackPos < -1.0) fallbackAction.steering = 0.2; // evita steering negativo
             else if (trackPos > 1.0) fallbackAction.steering = -0.2; // evita steering positivo
+        } else if (seg == 22 || seg == 29) {
+            fallbackAction.brake      = 0.0;
+        }
+        boolean isDangerous = /*seg == 15 ||*/ seg == 20 || seg == 21 || seg == 22 || seg == 23 || seg == 25 || seg == 24 || seg == 26 || seg == 27 || seg == 28 || seg == 29;
+
+        /* NON TESTATO TODO */
+        if (!isDangerous){
+            if (trackPos < -1.1 && fallbackAction.steering < 0) fallbackAction.steering = 0.17; // limit steering on left edge
+            else if (trackPos > 1.1 && fallbackAction.steering > 0) fallbackAction.steering = -0.17; // limit steering on right edge
+            else if (trackPos < -0.9 && fallbackAction.steering < 0) fallbackAction.steering = 0.07; // limit steering on left edge
+            else if (trackPos > 0.9 && fallbackAction.steering > 0) fallbackAction.steering = -0.07; // limit steering on right edge
         }
         // // ----------------------------------prova a togliere 20
-        boolean isDangerous = /*seg == 15 ||*/ seg == 20 || seg == 21 || seg == 22 || seg == 23 || seg == 26 /*|| seg == 27*/ || seg == 28 || seg == 29;
         if (seg != 0 && seg != SEGMENTS - 1) {
             if (offTrack || s.getSpeed() <= 7 || isDangerous || (seg == 15 && rawDist > 2746)) {
                 System.err.printf("[WARN] fallback action - trackPos: %.2f", trackPos);
                 //writeLog(s, fallbackAction);
+                System.out.printf("[fallbackAction] seg=%02d, trackPos=%.3f, steering=%.3f, accel=%.3f, brake=%.3f%n", 
+                   seg, trackPos, fallbackAction.steering, fallbackAction.accelerate, fallbackAction.brake);
                 return fallbackAction;
             }
         }
@@ -263,8 +269,12 @@ public class KNNDriver extends SimpleDriver {
             }
         else if (seg == 28) {
             return fallbackAction; // segmento 29: usa fallback
-        } else {
+        } else if ((seg == 8 || seg == 18) && trackPos < 0.0) {
+            out.steering = Math.max(0.0, out.steering);
+        }
+        else {
             out.steering = Math.max(-0.17, Math.min(0.17, out.steering));  
+            // FORSE STRINGERE ANCORA DI PIù
         }
 
         //if (seg >= 27) out.steering = Math.max(-0.3, out.steering); // limit steering in segment 28+
@@ -272,13 +282,19 @@ public class KNNDriver extends SimpleDriver {
         /* ====== logging ====== */
         //if (seg == 20) out.steering = Math.max(-0.01, Math.min(0.01, out.steering));
         //if (seg >= 29) out.steering = Math.max(-0.01, Math.min(0.01, out.steering));
-        if (trackPos < -1.1 && out.steering < 0) out.steering = 0.17; // limit steering on left edge
-        if (trackPos > 1.1 && out.steering > 0) out.steering = -0.17; // limit steering on right edge
+        if (trackPos < -1.1) out.steering = 0.17; // limit steering on left edge
+        else if (trackPos > 1.1) out.steering = -0.17; // limit steering on right edge
+        else if (trackPos < -0.9 && out.steering < 0) out.steering = 0.08; // limit steering on left edge
+        else if (trackPos > 0.9 && out.steering > 0) out.steering = -0.08; // limit steering on right edge
+
        
-        if (seg == 30 || seg == 31 || seg == 0){
-            out.steering = Math.max(-0.02, Math.min(0.02, out.steering));
+        if (seg == 29 || seg == 30 || seg == 31 || seg == 0){
+            //out.steering = Math.max(-0.02, Math.min(0.02, out.steering));
+            out.brake = 0.0; // no brake in these segments
         }
         //writeLog(s, knnAction);
+        System.out.printf("[ACTION] seg=%02d, trackPos=%.3f, steering=%.3f, accel=%.3f, brake=%.3f%n", 
+                   seg, trackPos, out.steering, out.accelerate, out.brake);
         return out;
     }
 
