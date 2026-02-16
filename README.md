@@ -4,7 +4,7 @@ Autonomous driver for **TORCS** built with **Behavioral Cloning + K-Nearest Neig
 
 **Repo:** https://github.com/landigf/TORCS
 
-> ⚠️ Portfolio/educational project. No credentials or proprietary datasets are committed.
+> Portfolio/educational project. No credentials or proprietary datasets are committed.
 
 ---
 
