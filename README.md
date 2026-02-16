@@ -13,8 +13,6 @@ Autonomous driver for **TORCS** built with **Behavioral Cloning + K-Nearest Neig
 ### Cinematic run
 ![TORCS cinematic run](01_torcs_cinematic_1920x1080.png)
 
-### Technical view (telemetry)
-![TORCS telemetry](02_torcs_technical_annotated_1920x1080.png)
 
 ---
 
